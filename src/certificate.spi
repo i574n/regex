@@ -1,0 +1,127 @@
+///- --package . --timeout 900000
+:# certificate static =
+    :< testing
+
+:< charset
+:< syntax
+:< derivative
+:< dfa
+:< minimal
+
+:| equivalence =
+    | Equivalent : i32
+    | Distinguished : list u32
+
+:== side = { automaton : dfa; at : target }
+
+:== probe = { left : target; right : target; word : list u32 }
+
+:== search = { a : dfa; b : dfa; codes : list u32 }
+
+:~ ^ seen_pair (l : target) (r : target) (seen : list (target * target)) : bool =
+    ?= seen ?|
+    | (x, y) :: rest => (x = l && y = r) || seen_pair l r rest
+    | [] => !-
+
+:~ ^ both_dead (l : target) (r : target) : bool = l = Dead && r = Dead
+
+:~ ^ successors (s : search) (p : probe) (codes : list u32) (seen : list (target * target)) (queue : list probe) : list probe * list (target * target) =
+    ?= codes ?|
+    | c :: rest =>
+        := l = step s::a p::left c
+        := r = step s::b p::right c
+        ? both_dead l r || seen_pair l r seen ?> successors s p rest seen queue
+        |: successors s p rest ((l, r) :: seen) (listm::append queue [ { left = l; right = r; word = c :: p::word } ])
+    | [] => queue, seen
+
+:~ ^ explore (s : search) (queue : list probe) (seen : list (target * target)) (pairs : i32) : equivalence =
+    ?= queue ?|
+    | p :: rest =>
+        ? verdict_at s::a p::left <> verdict_at s::b p::right ?> Distinguished (listm::rev p::word)
+        |:
+            := queue, seen = successors s p s::codes seen rest
+            explore s queue seen (pairs + 1i32)
+    | [] => Equivalent pairs
+
+:~ ^ lows_of_both (a : dfa) (b : dfa) : list u32 = lows_of (classes_from (range_points a::classes (range_points b::classes [ 0u32 ])))
+
+:~ ^ compare_from (a : dfa) (l : target) (b : dfa) (r : target) : equivalence =
+    explore { a = a; b = b; codes = lows_of_both a b } [ { left = l; right = r; word = [] } ] [ (l, r) ] 0i32
+
+:= equivalent (a : dfa) (b : dfa) : equivalence = compare_from a a::start b b::start
+
+:== witness = { left : i32; right : i32; word : list u32 }
+
+:| minimality =
+    | Minimal : list witness
+    | NotMinimal : i32 * i32
+
+:~ ^ witnesses_for (m : dfa) (i : i32) (j : i32) (n : i32) (acc : list witness) : minimality =
+    ? i >= n ?> Minimal (listm::rev acc)
+    |? j >= n ?> witnesses_for m (i + 1i32) (i + 2i32) n acc
+    |:
+        ?= compare_from m (To (state i)) m (To (state j)) ?|
+        | Distinguished w => witnesses_for m i (j + 1i32) n ({ left = i; right = j; word = w } :: acc)
+        | Equivalent _ => NotMinimal (i, j)
+
+:= certify (m : dfa) : minimality = witnesses_for m 0i32 1i32 (state_count m) []
+
+:| check =
+    | Certified : i32
+    | Forged : witness
+    | Uncertified : i32 * i32
+
+:~ ^ check_witnesses (m : dfa) (ws : list witness) (n : i32) : check =
+    ?= ws ?|
+    | w :: rest =>
+        ? matches (re_nth w::left m::regexes) w::word <> matches (re_nth w::right m::regexes) w::word ?> check_witnesses m rest (n + 1i32)
+        |: Forged w
+    | [] => Certified n
+
+:= check_minimality (m : dfa) (c : minimality) : check =
+    ?= c ?|
+    | Minimal ws => check_witnesses m ws 0i32
+    | NotMinimal (i, j) => Uncertified (i, j)
+
+:= is_forged (c : check) : bool =
+    ?= c ?|
+    | Forged _ => !+
+    | _ => !-
+
+:= minimal_of (r : re) : dfa =
+    ?= build r ?|
+    | Built d => minimize d
+    | StateCapReached _ => { classes = []; start = Dead; rows = []; regexes = [] }
+
+:= forged (c : minimality) : minimality =
+    ?= c ?|
+    | Minimal ws => Minimal (listm::map (\ (w : witness) => { w ?| word = [] }) ws)
+    | other => other
+
+///> rust
+///> gleam
+:# every_pair_of_sixteen_states_has_a_checked_distinguishing_word =
+    := ~r = fourth_from_end ()
+    := m = minimal_of r
+    check_minimality m (certify m) |> _assert_eq (Certified 120i32)
+
+///> rust
+///> gleam
+:# an_emptied_word_is_caught_as_a_forgery =
+    := ~r = fourth_from_end ()
+    := m = minimal_of r
+    is_forged (check_minimality m (forged (certify m))) |> _assert_eq !+
+
+///> rust
+///> gleam
+:# zero_runs_equal_zeros_then_one =
+    := ~r = zero_runs ()
+    := ~s = seq (star (zero ())) (one ())
+    equivalent (minimal_of r) (minimal_of s) |> _assert_eq (Equivalent 2i32)
+
+///> rust
+///> gleam
+:# different_languages_give_a_word_the_matchers_disagree_on =
+    := ~r = ends_in_zero ()
+    := ~s = seq (star (bit ())) (one ())
+    equivalent (minimal_of r) (minimal_of s) |> _assert_eq (Distinguished [ 48u32 ])

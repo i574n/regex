@@ -1,0 +1,130 @@
+///- --package . --timeout 900000
+:# nullable static =
+    :< testing
+
+:< charset
+:< syntax
+:< sm'_operators
+
+:! accepts_empty = ()
+:! rejects_empty = ()
+
+:| ^ evidence answer =
+    | EpsilonAccepts :: evidence accepts_empty
+    | StarAccepts :: evidence accepts_empty
+    | RepeatFromZero :: evidence accepts_empty
+    | RepeatOfNullable :: evidence accepts_empty -> evidence accepts_empty
+    | SeqAccepts :: evidence accepts_empty * evidence accepts_empty -> evidence accepts_empty
+    | AltLeftAccepts :: evidence accepts_empty -> evidence accepts_empty
+    | AltRightAccepts :: evidence accepts_empty -> evidence accepts_empty
+    | AndAccepts :: evidence accepts_empty * evidence accepts_empty -> evidence accepts_empty
+    | NotOfRejecting :: evidence rejects_empty -> evidence accepts_empty
+    | NothingRejects :: evidence rejects_empty
+    | SetRejects :: evidence rejects_empty
+    | SeqLeftRejects :: evidence rejects_empty -> evidence rejects_empty
+    | SeqRightRejects :: evidence rejects_empty -> evidence rejects_empty
+    | AltRejects :: evidence rejects_empty * evidence rejects_empty -> evidence rejects_empty
+    | AndLeftRejects :: evidence rejects_empty -> evidence rejects_empty
+    | AndRightRejects :: evidence rejects_empty -> evidence rejects_empty
+    | NotOfAccepting :: evidence accepts_empty -> evidence rejects_empty
+    | RepeatRejects :: evidence rejects_empty -> evidence rejects_empty
+
+:| nullability =
+    | Accepts : evidence accepts_empty
+    | Rejects : evidence rejects_empty
+
+:= not_nullability (inner : nullability) : nullability =
+    ?= inner ?|
+    | Accepts e => Rejects (NotOfAccepting e)
+    | Rejects e => Accepts (NotOfRejecting e)
+
+:= repeat_nullability (inner : nullability) : nullability =
+    ?= inner ?|
+    | Accepts e => Accepts (RepeatOfNullable e)
+    | Rejects e => Rejects (RepeatRejects e)
+
+:~ ^ nullability_of (r : re) : nullability =
+    ?= r ?|
+    | Nothing => Rejects NothingRejects
+    | Epsilon => Accepts EpsilonAccepts
+    | Set _ => Rejects SetRejects
+    | Seq (a, b) => seq_nullability (nullability_of a) b
+    | Alt (a, b) => alt_nullability (nullability_of a) b
+    | And (a, b) => and_nullability (nullability_of a) b
+    | Not a => not_nullability (nullability_of a)
+    | Star _ => Accepts StarAccepts
+    | Repeat (a, low, _) => ? low = 0u32 ?> Accepts RepeatFromZero |: repeat_nullability (nullability_of a)
+:& :~ seq_nullability (left : nullability) (b : re) : nullability =
+    ?= left ?|
+    | Rejects l => Rejects (SeqLeftRejects l)
+    | Accepts l =>
+        ?= nullability_of b ?|
+        | Accepts r => Accepts (SeqAccepts (l, r))
+        | Rejects r => Rejects (SeqRightRejects r)
+:& :~ alt_nullability (left : nullability) (b : re) : nullability =
+    ?= left ?|
+    | Accepts l => Accepts (AltLeftAccepts l)
+    | Rejects l =>
+        ?= nullability_of b ?|
+        | Accepts r => Accepts (AltRightAccepts r)
+        | Rejects r => Rejects (AltRejects (l, r))
+:& :~ and_nullability (left : nullability) (b : re) : nullability =
+    ?= left ?|
+    | Rejects l => Rejects (AndLeftRejects l)
+    | Accepts l =>
+        ?= nullability_of b ?|
+        | Accepts r => Accepts (AndAccepts (l, r))
+        | Rejects r => Rejects (AndRightRejects r)
+
+:~ ^ nullable (r : re) : bool =
+    ?= nullability_of r ?|
+    | Accepts _ => !+
+    | Rejects _ => !-
+
+:~ ^ accept_reason (e : evidence accepts_empty) : string =
+    ?= e ?|
+    | EpsilonAccepts => "eps"
+    | StarAccepts => "star"
+    | RepeatFromZero => "repeat-from-zero"
+    | RepeatOfNullable inner => "repeat(" ++# accept_reason inner ++# ")"
+    | SeqAccepts (l, r) => "seq(" ++# accept_reason l ++# "," ++# accept_reason r ++# ")"
+    | AltLeftAccepts inner => "left(" ++# accept_reason inner ++# ")"
+    | AltRightAccepts inner => "right(" ++# accept_reason inner ++# ")"
+    | AndAccepts (l, r) => "and(" ++# accept_reason l ++# "," ++# accept_reason r ++# ")"
+    | NotOfRejecting inner => "not(" ++# reject_reason inner ++# ")"
+:& :~ reject_reason (e : evidence rejects_empty) : string =
+    ?= e ?|
+    | NothingRejects => "nothing"
+    | SetRejects => "set"
+    | SeqLeftRejects inner => "seq-left(" ++# reject_reason inner ++# ")"
+    | SeqRightRejects inner => "seq-right(" ++# reject_reason inner ++# ")"
+    | AltRejects (l, r) => "alt(" ++# reject_reason l ++# "," ++# reject_reason r ++# ")"
+    | AndLeftRejects inner => "and-left(" ++# reject_reason inner ++# ")"
+    | AndRightRejects inner => "and-right(" ++# reject_reason inner ++# ")"
+    | NotOfAccepting inner => "not(" ++# accept_reason inner ++# ")"
+    | RepeatRejects inner => "repeat(" ++# reject_reason inner ++# ")"
+
+:= nullability_text (r : re) : string =
+    ?= nullability_of r ?|
+    | Accepts e => "accepts " ++# accept_reason e
+    | Rejects e => "rejects " ++# reject_reason e
+
+///> rust
+///> gleam
+:# a_starred_bit_after_an_optional_zero_accepts_empty_with_its_reason =
+    nullability_text (seq (optional (zero ())) (star (bit ()))) |> _assert_eq "accepts seq(left(eps),star)"
+
+///> rust
+///> gleam
+:# a_bit_followed_by_anything_rejects_on_the_left =
+    nullability_text (seq (bit ()) (star (any_code ()))) |> _assert_eq "rejects seq-left(alt(set,set))"
+
+///> rust
+///> gleam
+:# complement_flips_the_evidence =
+    (nullability_text (negate (bit ())), nullability_text (negate (star (bit ())))) |> _assert_eq ("accepts not(alt(set,set))", "rejects not(star)")
+
+///> rust
+///> gleam
+:# a_counted_repeat_from_one_needs_a_nullable_body =
+    (nullable (repeat (bit ()) 1u32 (Bounded 4u32)), nullable (repeat (optional (bit ())) 2u32 Unbounded)) |> _assert_eq (!-, !+)

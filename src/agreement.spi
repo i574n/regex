@@ -1,0 +1,159 @@
+///- --package . --timeout 900000
+:# agreement static =
+    :< testing
+
+:< charset
+:< syntax
+:< derivative
+:< dfa
+:< minimal
+:< certificate
+:< partial
+:< keyed_rng
+
+:| corpus_purpose =
+    | WordLength : u32
+    | Letter : u32
+
+:+ purpose_code corpus_purpose =
+    \ p =>
+        ?= p ?|
+        | WordLength i => i
+        | Letter i => 1000u32 + i
+
+:= draw_at (salt : u32) (turn : u32) (purpose : corpus_purpose) : u32 = draw (roll_key (seed salt) (tick turn) (entity 1u32) purpose)
+
+:~ ^ u32_at (i : u32) (values : list u32) : u32 =
+    ?= values ?|
+    | v :: rest => ? i = 0u32 ?> v |: u32_at (i - 1u32) rest
+    | [] => 0u32
+
+:~ ^ count_u32 (values : list u32) (n : u32) : u32 =
+    ?= values ?|
+    | _ :: rest => count_u32 rest (n + 1u32)
+    | [] => n
+
+:~ ^ letters (salt : u32) (turn : u32) (lows : list u32) (i : u32) (n : u32) (acc : list u32) : list u32 =
+    ? i >= n ?> acc
+    |: letters salt turn lows (i + 1u32) n (u32_at (draw_at salt turn (Letter i) % count_u32 lows 0u32) lows :: acc)
+
+:= random_word (salt : u32) (turn : u32) (lows : list u32) : list u32 =
+    letters salt turn lows 0u32 (draw_at salt turn (WordLength 0u32) % 13u32) []
+
+:== answers = { brzozowski : verdict; antimirov : verdict; eager_dfa : verdict; minimal_dfa : verdict }
+
+:= answers_of (r : re) (eager : built) (m : dfa) (w : list u32) : answers =
+    { brzozowski = matches r w; antimirov = nfa_matches r w; eager_dfa = built_run eager w; minimal_dfa = run m w }
+
+:= agree (a : answers) : bool = (a::brzozowski = a::antimirov) && (a::brzozowski = a::eager_dfa) && (a::brzozowski = a::minimal_dfa)
+
+:| agreement =
+    | Agree : i32
+    | Disagree : list u32 * answers
+
+:~ ^ agree_from (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (checked : i32) : agreement =
+    ? turn >= n ?> Agree checked
+    |:
+        := w = random_word salt turn (lows_of (classes_of r))
+        := a = answers_of r eager m w
+        ? agree a ?> agree_from r eager m salt (turn + 1u32) n (checked + 1i32) |: Disagree (w, a)
+
+:= agreement_on (salt : u32) (n : u32) (r : re) : agreement = agree_from r (build r) (minimal_of r) salt 0u32 n 0i32
+
+:~ ^ all_agree (salt : u32) (n : u32) (patterns : list re) (total : i32) : agreement =
+    ?= patterns ?|
+    | r :: rest =>
+        ?= agreement_on salt n r ?|
+        | Agree k => all_agree salt n rest (total + k)
+        | d => d
+    | [] => Agree total
+
+:| example =
+    | Example : list u32
+    | EmptyLanguage
+
+:== walk = { at : target; word : list u32 }
+
+:~ ^ has_target (t : target) (seen : list target) : bool =
+    ?= seen ?|
+    | x :: rest => x = t || has_target t rest
+    | [] => !-
+
+:~ ^ walk_on (d : dfa) (w : walk) (lows : list u32) (seen : list target) (queue : list walk) : list walk * list target =
+    ?= lows ?|
+    | c :: rest =>
+        := next = step d w::at c
+        ? next = Dead || has_target next seen ?> walk_on d w rest seen queue
+        |: walk_on d w rest (next :: seen) (listm::append queue [ { at = next; word = c :: w::word } ])
+    | [] => queue, seen
+
+:~ ^ search_accepted (d : dfa) (queue : list walk) (seen : list target) : example =
+    ?= queue ?|
+    | w :: rest =>
+        ? verdict_at d w::at = Accepted ?> Example (listm::rev w::word)
+        |:
+            := queue, seen = walk_on d w (lows_of d::classes) seen rest
+            search_accepted d queue seen
+    | [] => EmptyLanguage
+
+:= shortest_accepted (d : dfa) : example = search_accepted d [ { at = d::start; word = [] } ] [ d::start ]
+
+:~ ^ appended (word : list u32) (lows : list u32) (acc : list (list u32)) : list (list u32) =
+    ?= lows ?|
+    | c :: rest => appended word rest (listm::append word [ c ] :: acc)
+    | [] => acc
+
+:~ ^ without_last (word : list u32) : list u32 =
+    ?= word ?|
+    | _ :: [] => []
+    | c :: rest => c :: without_last rest
+    | [] => []
+
+:= mutations (word : list u32) (lows : list u32) : list (list u32) = without_last word :: appended word lows [ word ]
+
+:~ ^ agree_on_words (r : re) (eager : built) (m : dfa) (words : list (list u32)) (checked : i32) : agreement =
+    ?= words ?|
+    | w :: rest =>
+        := a = answers_of r eager m w
+        ? agree a ?> agree_on_words r eager m rest (checked + 1i32) |: Disagree (w, a)
+    | [] => Agree checked
+
+:= boundary_agreement (r : re) : agreement =
+    := m = minimal_of r
+    ?= shortest_accepted m ?|
+    | Example w => agree_on_words r (build r) m (mutations w (lows_of m::classes)) 0i32
+    | EmptyLanguage => Agree 0i32
+
+:~ ^ all_boundaries (patterns : list re) (total : i32) : agreement =
+    ?= patterns ?|
+    | r :: rest =>
+        ?= boundary_agreement r ?|
+        | Agree k => all_boundaries rest (total + k)
+        | d => d
+    | [] => Agree total
+:= curated () : list re =
+    [ ends_in_zero (); zero_runs (); fourth_from_end (); repeat (Set (lower ())) 2u32 (Bounded 5u32); both (star (bit ())) (negate (ends_in_zero ())); seq (Set (minus (lower ()) (vowels ()))) (plus (Set (digits ()))) ]
+
+///> rust
+///> gleam
+:# every_engine_answers_alike_on_the_seeded_corpus =
+    := ~salt = 20261101u32
+    all_agree salt 40u32 (curated ()) 0i32 |> _assert_eq (Agree 240i32)
+
+///> rust
+///> gleam
+:# the_same_seed_draws_the_same_word =
+    := ~salt = 7u32
+    := lows = [ 48u32; 49u32 ]
+    (random_word salt 3u32 lows = random_word salt 3u32 lows) |> _assert_eq !+
+
+///> rust
+///> gleam
+:# the_shortest_word_of_the_fourth_symbol_from_the_end_is_one_and_three_zeros =
+    := ~r = fourth_from_end ()
+    shortest_accepted (minimal_of r) |> _assert_eq (Example [ 49u32; 48u32; 48u32; 48u32 ])
+
+///> rust
+///> gleam
+:# every_engine_agrees_on_each_shortest_word_and_its_one_symbol_mutations =
+    all_boundaries (curated ()) 0i32 |> _assert_eq (Agree 44i32)

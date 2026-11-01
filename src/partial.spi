@@ -1,0 +1,154 @@
+///- --package . --timeout 900000
+:# partial static =
+    :< testing
+
+:< charset
+:< syntax
+:< nullable
+:< derivative
+:< dfa
+
+:~ ^ merge_terms (a : list re) (b : list re) : list re =
+    ?= a ?|
+    | x :: rest => merge_terms rest (insert_leaf x b)
+    | [] => b
+
+:~ ^ seq_each (xs : list re) (tail : re) (acc : list re) : list re =
+    ?= xs ?|
+    | x :: rest => seq_each rest tail (insert_leaf (seq x tail) acc)
+    | [] => acc
+
+:~ ^ both_each (x : re) (ys : list re) (acc : list re) : list re =
+    ?= ys ?|
+    | y :: rest => both_each x rest (insert_leaf (both x y) acc)
+    | [] => acc
+
+:~ ^ cross_both (xs : list re) (ys : list re) (acc : list re) : list re =
+    ?= xs ?|
+    | x :: rest => cross_both rest ys (both_each x ys acc)
+    | [] => acc
+
+:= singleton_unless_nothing (r : re) : list re = ? is_nothing r ?> [] |: [ r ]
+
+:~ ^ partials (c : u32) (r : re) : list re =
+    ?= r ?|
+    | Set s => ? contains c s ?> [ Epsilon ] |: []
+    | Alt (a, b) => merge_terms (partials c a) (partials c b)
+    | Seq (a, b) => merge_terms (seq_each (partials c a) b []) (? nullable a ?> partials c b |: [])
+    | Star a => seq_each (partials c a) r []
+    | Repeat (a, low, up) => seq_each (partials c a) (repeat a (one_less low) (upper_less up)) []
+    | And (a, b) => cross_both (partials c a) (partials c b) []
+    | Not _ => singleton_unless_nothing (derive c r)
+    | _ => []
+
+:~ ^ step_terms (c : u32) (terms : list re) (acc : list re) : list re =
+    ?= terms ?|
+    | t :: rest => step_terms c rest (merge_terms (partials c t) acc)
+    | [] => acc
+
+:~ ^ any_nullable (terms : list re) : bool =
+    ?= terms ?|
+    | t :: rest => nullable t || any_nullable rest
+    | [] => !-
+
+:~ ^ nfa_from (terms : list re) (codes : list u32) : verdict =
+    ?= codes ?|
+    | c :: rest => nfa_from (step_terms c terms []) rest
+    | [] => verdict_of (any_nullable terms)
+
+:= nfa_matches (r : re) (codes : list u32) : verdict = nfa_from (singleton_unless_nothing r) codes
+
+:~ ^ has_term (r : re) (terms : list re) : bool =
+    ?= terms ?|
+    | t :: rest => same_re r t || has_term r rest
+    | [] => !-
+
+:~ ^ add_new (fresh : list re) (seen : list re) (queue : list re) : list re * list re =
+    ?= fresh ?|
+    | t :: rest => ? has_term t seen ?> add_new rest seen queue |: add_new rest (t :: seen) (t :: queue)
+    | [] => seen, queue
+
+:~ ^ each_class (lows : list u32) (r : re) (acc : list re) : list re =
+    ?= lows ?|
+    | c :: rest => each_class rest r (merge_terms (partials c r) acc)
+    | [] => acc
+
+:~ ^ support (lows : list u32) (queue : list re) (seen : list re) : list re =
+    ?= queue ?|
+    | t :: rest =>
+        := seen, queue = add_new (each_class lows t []) seen rest
+        support lows queue seen
+    | [] => seen
+
+:~ ^ count_terms (terms : list re) (n : i32) : i32 =
+    ?= terms ?|
+    | _ :: rest => count_terms rest (n + 1i32)
+    | [] => n
+
+:| width =
+    | Width : i32
+    | NoWidth
+
+:= add_width (a : width) (b : width) : width =
+    ?= a ?|
+    | Width x => ?= b ?| Width y => Width (x + y) | NoWidth => NoWidth
+    | NoWidth => NoWidth
+
+:= times_width (k : i32) (a : width) : width =
+    ?= a ?|
+    | Width x => Width (k * x)
+    | NoWidth => NoWidth
+
+:= copies (low : u32) (up : upper) : i32 =
+    ?= up ?|
+    | Bounded n => conv n
+    | Unbounded => ? low = 0u32 ?> 1i32 |: conv low
+
+:~ ^ alphabetic_width (r : re) : width =
+    ?= r ?|
+    | Set _ => Width 1i32
+    | Seq (a, b) => add_width (alphabetic_width a) (alphabetic_width b)
+    | Alt (a, b) => add_width (alphabetic_width a) (alphabetic_width b)
+    | Star a => alphabetic_width a
+    | Repeat (a, low, up) => times_width (copies low up) (alphabetic_width a)
+    | And _ => NoWidth
+    | Not _ => NoWidth
+    | _ => Width 0i32
+
+:| bound =
+    | WithinBound : i32 * i32
+    | OverBound : i32 * i32
+    | OutsideFragment
+
+:= support_size (r : re) : i32 = count_terms (support (lows_of (classes_of r)) [ r ] [ r ]) 0i32
+
+:= support_bound (r : re) : bound =
+    ?= alphabetic_width r ?|
+    | NoWidth => OutsideFragment
+    | Width w =>
+        := size = support_size r
+        ? size <= w + 1i32 ?> WithinBound (size, w + 1i32) |: OverBound (size, w + 1i32)
+
+///> rust
+///> gleam
+:# partial_derivatives_split_an_alternation_into_terms =
+    := ~r = seq (alt (word [ 97u32; 98u32 ]) (word [ 97u32; 99u32 ])) (code 100u32)
+    count_terms (partials 97u32 r) 0i32 |> _assert_eq 2i32
+
+///> rust
+///> gleam
+:# the_term_set_matcher_agrees_on_zero_runs =
+    := ~n = 20u32
+    (nfa_matches (zero_runs ()) (zeros_then_one n), nfa_matches (zero_runs ()) (zeros n [])) |> _assert_eq (Accepted, Rejected)
+
+///> rust
+///> gleam
+:# the_fourth_symbol_from_the_end_stays_within_the_antimirov_bound =
+    := ~r = fourth_from_end ()
+    support_bound r |> _assert_eq (WithinBound (5i32, 10i32))
+
+///> rust
+///> gleam
+:# complement_is_outside_the_bound_fragment =
+    := ~r = negate (ends_in_zero ())
+    support_bound r |> _assert_eq OutsideFragment
