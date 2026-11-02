@@ -54,7 +54,7 @@
     | r :: rest => ? c < r::low ?> !- |? c <= r::high ?> !+ |: contains_in c rest
     | [] => !-
 
-:~ ^ contains (c : u32) (set : char_set normal) : bool = contains_in c (ranges_of set)
+:~ contains (c : u32) (set : char_set normal) : bool = contains_in c (ranges_of set)
 
 :~ ^ gaps (ranges : list code_range) (next : u32) : list code_range =
     ?= ranges ?|
@@ -63,17 +63,17 @@
         ? r::low > next ?> range next (r::low - 1u32) :: tail |: tail
     | [] => [ range next (last_code_point ()) ]
 
-:~ ^ complement (set : char_set normal) : char_set normal = Normal (gaps (ranges_of set) 0u32)
+:~ complement (set : char_set normal) : char_set normal = Normal (gaps (ranges_of set) 0u32)
 
-:~ ^ set_union (a : char_set normal) (b : char_set normal) : char_set normal =
+:~ set_union (a : char_set normal) (b : char_set normal) : char_set normal =
     of_ranges (listm::append (ranges_of a) (ranges_of b))
 
-:~ ^ intersection (a : char_set normal) (b : char_set normal) : char_set normal =
+:~ intersection (a : char_set normal) (b : char_set normal) : char_set normal =
     complement (set_union (complement a) (complement b))
 
-:~ ^ minus (a : char_set normal) (b : char_set normal) : char_set normal = intersection a (complement b)
+:~ minus (a : char_set normal) (b : char_set normal) : char_set normal = intersection a (complement b)
 
-:~ ^ is_empty (set : char_set normal) : bool =
+:~ is_empty (set : char_set normal) : bool =
     ?= ranges_of set ?|
     | [] => !+
     | _ => !-
@@ -99,7 +99,7 @@
                 | o => o
             | o => o
 
-:~ ^ order_sets (a : char_set normal) (b : char_set normal) : order = order_ranges (ranges_of a) (ranges_of b)
+:~ order_sets (a : char_set normal) (b : char_set normal) : order = order_ranges (ranges_of a) (ranges_of b)
 
 :~ ^ count_ranges (ranges : list code_range) (n : i32) : i32 =
     ?= ranges ?|

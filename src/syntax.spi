@@ -56,7 +56,7 @@
 :& :~ order_repeat (x : re) (low : u32) (up : upper) (u : re) (l : u32) (p : upper) : order =
     then_order (order_u32 low l) (\ () => then_order (order_upper up p) (\ () => order_re x u))
 
-:~ ^ same_re (a : re) (b : re) : bool =
+:~ same_re (a : re) (b : re) : bool =
     ?= order_re a b ?|
     | Same => !+
     | _ => !-
@@ -116,18 +116,18 @@
     | leaf :: [] => leaf
     | leaf :: rest => And (leaf, and_of rest)
 
-:~ ^ alt (a : re) (b : re) : re =
+:~ alt (a : re) (b : re) : re =
     ? is_universal a || is_universal b ?> universal () |: alt_of (alt_leaves a (alt_leaves b []))
 
-:~ ^ both (a : re) (b : re) : re =
+:~ both (a : re) (b : re) : re =
     ? is_nothing a || is_nothing b ?> Nothing |: and_of (and_leaves a (and_leaves b []))
 
-:~ ^ negate (a : re) : re =
+:~ negate (a : re) : re =
     ?= a ?|
     | Not inner => inner
     | _ => Not a
 
-:~ ^ star (a : re) : re =
+:~ star (a : re) : re =
     ?= a ?|
     | Nothing => Epsilon
     | Epsilon => Epsilon
@@ -147,7 +147,7 @@
     | Epsilon => Epsilon
     | _ => Repeat (a, low, up)
 
-:~ ^ repeat (a : re) (low : u32) (up : upper) : re =
+:~ repeat (a : re) (low : u32) (up : upper) : re =
     ?= up ?|
     | Bounded n =>
         ? n = 0u32 ?> Epsilon

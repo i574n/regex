@@ -76,7 +76,7 @@
         | Accepts r => Accepts (AndAccepts (l, r))
         | Rejects r => Rejects (AndRightRejects r)
 
-:~ ^ nullable (r : re) : bool =
+:~ nullable (r : re) : bool =
     ?= nullability_of r ?|
     | Accepts _ => !+
     | Rejects _ => !-

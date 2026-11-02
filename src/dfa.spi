@@ -72,7 +72,7 @@
     | (k, s) :: rest => ? same_re r k ?> Known s |: find_state r rest
     | [] => Unknown
 
-:~ ^ target_of (d : re) (f : frontier) : target * frontier =
+:~ target_of (d : re) (f : frontier) : target * frontier =
     ? is_nothing d ?> Dead, f
     |:
         ?= find_state d f::known ?|
@@ -105,7 +105,7 @@
 
 := first_frontier (r : re) : frontier = ? is_nothing r ?> { known = []; count = 0i32 } |: { known = [ (r, state 0i32) ]; count = 1i32 }
 
-:~ ^ build_within (cap : i32) (r : re) : built = build_rows 0i32 cap r (classes_of r) (first_frontier r) []
+:~ build_within (cap : i32) (r : re) : built = build_rows 0i32 cap r (classes_of r) (first_frontier r) []
 
 := state_cap () : i32 = 4096i32
 
@@ -126,14 +126,14 @@
     | r :: rest => ? i = 0i32 ?> r |: row_at (i - 1i32) rest
     | [] => { accepting = Rejected; next = [] }
 
-:~ ^ step (d : dfa) (t : target) (c : u32) : target =
+:~ step (d : dfa) (t : target) (c : u32) : target =
     ?= t ?|
     | Dead => Dead
     | To s =>
         := r = row_at (state_index s) d::rows
         target_at (class_index c d::classes 0i32) r::next
 
-:~ ^ verdict_at (d : dfa) (t : target) : verdict =
+:~ verdict_at (d : dfa) (t : target) : verdict =
     ?= t ?|
     | Dead => Rejected
     | To s =>

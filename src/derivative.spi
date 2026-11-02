@@ -31,7 +31,7 @@
     | c :: rest => derive_word rest (derive c r)
     | [] => r
 
-:~ ^ matches (r : re) (codes : list u32) : verdict = verdict_of (nullable (derive_word codes r))
+:~ matches (r : re) (codes : list u32) : verdict = verdict_of (nullable (derive_word codes r))
 
 :~ ^ zeros (n : u32) (tail : list u32) : list u32 = ? n = 0u32 ?> tail |: zeros (n - 1u32) (48u32 :: tail)
 

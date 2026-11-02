@@ -67,7 +67,7 @@
 
 :== refined = { blocks : list block; seen : list (signature * i32); count : i32 }
 
-:~ ^ assign (s : signature) (acc : refined) : refined =
+:~ assign (s : signature) (acc : refined) : refined =
     ?= signature_id s acc::seen ?|
     | FoundAt known => { acc ?| blocks = Block known :: acc::blocks }
     | Missing => { blocks = Block acc::count :: acc::blocks; seen = (s, acc::count) :: acc::seen; count = acc::count + 1i32 }
@@ -137,7 +137,7 @@
         := row = { accepting = r::accepting; next = block_targets (blocks_of_targets r::next blocks) }
         quotient_rows d blocks (id - 1i32) count (row :: rows) (re_nth at d::regexes :: regexes)
 
-:~ ^ minimize (d : dfa) : dfa =
+:~ minimize (d : dfa) : dfa =
     := blocks0 = initial_blocks d::rows (live_states d) 0i32
     := blocks, count = moore d::rows blocks0 (count_blocks blocks0 [] 0i32)
     := rows, regexes = quotient_rows d blocks (count - 1i32) count [] []

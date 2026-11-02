@@ -23,7 +23,7 @@
     | (x, y) :: rest => (x = l && y = r) || seen_pair l r rest
     | [] => !-
 
-:~ ^ both_dead (l : target) (r : target) : bool = l = Dead && r = Dead
+:~ both_dead (l : target) (r : target) : bool = l = Dead && r = Dead
 
 :~ ^ successors (s : search) (p : probe) (codes : list u32) (seen : list (target * target)) (queue : list probe) : list probe * list (target * target) =
     ?= codes ?|
@@ -43,9 +43,9 @@
             explore s queue seen (pairs + 1i32)
     | [] => Equivalent pairs
 
-:~ ^ lows_of_both (a : dfa) (b : dfa) : list u32 = lows_of (classes_from (range_points a::classes (range_points b::classes [ 0u32 ])))
+:~ lows_of_both (a : dfa) (b : dfa) : list u32 = lows_of (classes_from (range_points a::classes (range_points b::classes [ 0u32 ])))
 
-:~ ^ compare_from (a : dfa) (l : target) (b : dfa) (r : target) : equivalence =
+:~ compare_from (a : dfa) (l : target) (b : dfa) (r : target) : equivalence =
     explore { a = a; b = b; codes = lows_of_both a b } [ { left = l; right = r; word = [] } ] [ (l, r) ] 0i32
 
 := equivalent (a : dfa) (b : dfa) : equivalence = compare_from a a::start b b::start
