@@ -32,3 +32,7 @@ pwsh build.ps1           # the Spiral test cells, then bench/bench.spi -> Rust -
   split into crates.
 - No captures, lookaround or Unicode categories. The XSD front end (`src/xsd.spi`) knows six Unicode blocks and ASCII `\d\s\w`, and has not been checked against a real schema corpus yet.
 - One maintainer, with AI agents writing most of the code.
+
+## License
+
+[GNU AGPL v3](LICENSE), like the rest of the i574n repositories. Benchmarks: <https://i574n.github.io/regex/bench/report.html>.
