@@ -11,3 +11,6 @@ output = "bench.rs"
 [[bin]]
 name = "regex-bench"
 path = "bench.rs"
+
+[dependencies]
+regex = "1"

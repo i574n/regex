@@ -14,6 +14,7 @@
     | ZeroRuns
     | FourthFromEnd
     | CountedLetters
+    | FourthFromEndLong
 
 := workload_name (w : workload) : string =
     ?= w ?|
@@ -21,6 +22,7 @@
     | ZeroRuns => "(0|00)*1"
     | FourthFromEnd => "(0|1)*1(0|1){3}"
     | CountedLetters => "[a-z]{1,64}"
+    | FourthFromEndLong => "(0|1)*1(0|1){3} on 4 texts of 4000 bits"
 
 := workload_regex (w : workload) : re =
     ?= w ?|
@@ -28,6 +30,15 @@
     | ZeroRuns => zero_runs ()
     | FourthFromEnd => fourth_from_end ()
     | CountedLetters => repeat (Set (lower ())) 1u32 (Bounded 64u32)
+    | FourthFromEndLong => fourth_from_end ()
+
+:= crate_pattern (w : workload) : string =
+    ?= w ?|
+    | EndsInZero => "^(?:0|1)*0$"
+    | ZeroRuns => "^(?:0|00)*1$"
+    | FourthFromEnd => "^(?:0|1)*1(?:0|1){3}$"
+    | CountedLetters => "^[a-z]{1,64}$"
+    | FourthFromEndLong => "^(?:0|1)*1(?:0|1){3}$"
 
 := expected_minimal (w : workload) : size =
     ?= w ?|
@@ -35,14 +46,35 @@
     | ZeroRuns => States 2i32
     | FourthFromEnd => States 16i32
     | CountedLetters => States 65i32
+    | FourthFromEndLong => States 16i32
 
-:== prepared = { regex : re; eager : built; quotient : dfa; words : list (list u32) }
+:== prepared = { regex : re; eager : built; quotient : dfa; words : list (list u32); texts : list string; crate_regex : compiled_regex }
 
 :~ ^ words_from (salt : u32) (turn : u32) (n : u32) (lows : list u32) (acc : list (list u32)) : list (list u32) =
     ? turn >= n ?> acc |: words_from salt (turn + 1u32) n lows (random_word salt turn lows :: acc)
 
-:~ ^ prepare (salt : u32) (n : u32) (r : re) : prepared =
-    { regex = r; eager = build r; quotient = minimal_of r; words = words_from salt 0u32 n (lows_of (classes_of r)) [] }
+:~ ^ text_of (codes : list u32) : string =
+    ?= codes ?|
+    | c :: rest => xml::code_point_string c ++# text_of rest
+    | [] => ""
+
+:~ ^ texts_of (words : list (list u32)) : list string =
+    ?= words ?|
+    | w :: rest => text_of w :: texts_of rest
+    | [] => []
+
+:~ ^ long_texts (salt : u32) (turn : u32) (acc : list (list u32)) : list (list u32) =
+    ? turn >= 4u32 ?> acc |: long_texts salt (turn + 1u32) (letters salt turn [ 48u32; 49u32 ] 0u32 4000u32 [] :: acc)
+
+:= workload_words (salt : u32) (n : u32) (w : workload) (r : re) : list (list u32) =
+    ?= w ?|
+    | FourthFromEndLong => long_texts salt 0u32 []
+    | _ => words_from salt 0u32 n (lows_of (classes_of r)) []
+
+:~ ^ prepare (salt : u32) (n : u32) (w : workload) : prepared =
+    := r = workload_regex w
+    := words = workload_words salt n w r
+    { regex = r; eager = build r; quotient = minimal_of r; words = words; texts = texts_of words; crate_regex = compile_regex (crate_pattern w) }
 
 :| arm =
     | BrzozowskiArm
@@ -50,6 +82,7 @@
     | EagerArm
     | MinimalArm
     | MinimalAgainArm
+    | RegexCrateArm
 
 :~ ^ answer (a : arm) (p : prepared) (w : list u32) : verdict =
     ?= a ?|
@@ -58,6 +91,7 @@
     | EagerArm => built_run p::eager w
     | MinimalArm => run p::quotient w
     | MinimalAgainArm => run p::quotient w
+    | RegexCrateArm => run p::quotient w
 
 :~ ^ accepted (a : arm) (p : prepared) (words : list (list u32)) (n : i32) : i32 =
     ?= words ?|
@@ -66,9 +100,22 @@
 
 :== sample = { arm : arm; nanos : u64; count : i32 }
 
+:~ ^ crate_accepted (p : prepared) (texts : list string) (n : i32) : i32 =
+    ?= texts ?|
+    | t :: rest => crate_accepted p rest (? regex_is_match p::crate_regex t ?> n + 1i32 |: n)
+    | [] => n
+
+:= one_pass (a : arm) (p : prepared) : i32 =
+    ?= a ?|
+    | RegexCrateArm => crate_accepted p p::texts 0i32
+    | _ => accepted a p p::words 0i32
+
+:~ ^ passes (a : arm) (p : prepared) (left : i32) (count : i32) : i32 =
+    ? left <= 0i32 ?> count |: passes a p (left - 1i32) (one_pass a p)
+
 :~ ^ timed (a : arm) (p : prepared) : sample =
     := before = elapsed_nanos ()
-    := count = accepted a p p::words 0i32
+    := count = passes a p 25i32 0i32
     { arm = a; nanos = elapsed_nanos () - before; count = count }
 
 :~ ^ run_arms (arms : list arm) (p : prepared) (acc : list sample) : list sample =
@@ -83,10 +130,10 @@
         | a :: rest => rotated (k - 1i32) (listm::append rest [ a ])
         | [] => arms
 
-:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm ]
+:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm; RegexCrateArm ]
 
 :~ ^ rounds (p : prepared) (k : i32) (n : i32) (acc : list (list sample)) : list (list sample) =
-    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 5i32) (all_arms ())) p [] :: acc)
+    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 6i32) (all_arms ())) p [] :: acc)
 
 :~ ^ sample_of (a : arm) (samples : list sample) : sample =
     ?= samples ?|
@@ -153,6 +200,7 @@
     | EagerArm => "eager DFA"
     | MinimalArm => "minimal DFA (baseline A)"
     | MinimalAgainArm => "minimal DFA again (A/A)"
+    | RegexCrateArm => "Rust regex crate 1.x (oracle and baseline B)"
 
 := cell (text : string) : string = "<td>" ++# text ++# "</td>"
 
@@ -162,7 +210,7 @@
     := s = spread_of (ratios a all)
     ?= aa ?|
     | Ratio _ => "<tr>" ++# cell (arm_name a) ++# spread_cells s ++# "</tr>\n"
-    | Void _ => "<tr>" ++# cell (arm_name a) ++# cell "VOID" ++# cell "A/A outside 0.95-1.05" ++# "</tr>\n"
+    | Void v => "<tr>" ++# cell (arm_name a) ++# cell "VOID" ++# cell ("A/A " ++# milli_text v::middle ++# ", outside 0.95-1.05") ++# "</tr>\n"
 
 :~ ^ counts_agree (all : list (list sample)) (count : i32) : bool =
     ?= all ?|
@@ -215,17 +263,31 @@
     := agreed = ?= a ?| Agree _ => !+ | _ => !-
     minimal_ok && certified && agreed
 
-:~ ^ workload_report (salt : u32) (w : workload) : report =
-    := p = prepare salt 400u32 (workload_regex w)
+:== facts = { name : string; prepared : prepared; certification : certification; agreement : agreement; ok : bool }
+
+:= facts_head (f : facts) : string =
+    := sizes = size_text (size_of f::prepared::eager) ++# " built, " ++# size_text (minimal_size f::prepared::eager) ++# " minimal"
+    "<h2>" ++# f::name ++# "</h2>\n<p>" ++# sizes ++# "; " ++# certification_text f::certification ++# "; " ++# agreement_text f::agreement ++# (? f::ok ?> "" |: "; MISMATCH") ++# "</p>\n"
+
+:~ ^ time_rows (aa : time_verdict) (all : list (list sample)) (arms : list arm) : string =
+    ?= arms ?|
+    | a :: rest => time_row aa all a ++# time_rows aa all rest
+    | [] => ""
+
+:= time_table (aa : time_verdict) (all : list (list sample)) : string =
+    "<table><tr><th>arm</th><th>median time / baseline A</th><th>IQR</th></tr>\n" ++# time_rows aa all (all_arms ()) ++# "</table>\n"
+
+:~ ^ facts_of (salt : u32) (w : workload) (p : prepared) (all : list (list sample)) : facts =
     := c = certification_of p::quotient
     := a = agreement_on salt 40u32 p::regex
-    := all = rounds p 0i32 9i32 []
-    := aa = aa_band (spread_of (ratios MinimalAgainArm all))
     := ok = deterministic_ok w p c a && counts_agree all (accepted MinimalArm p p::words 0i32)
-    := head = "<h2>" ++# workload_name w ++# "</h2>\n<p>" ++# size_text (size_of p::eager) ++# " built, " ++# size_text (minimal_size p::eager) ++# " minimal; " ++# certification_text c ++# "; " ++# agreement_text a ++# (? ok ?> "" |: "; MISMATCH") ++# "</p>\n"
-    := table = "<table><tr><th>arm</th><th>median time / baseline A</th><th>IQR</th></tr>\n" ++# listm::fold (\ acc x => acc ++# time_row aa all x) "" (all_arms ()) ++# "</table>\n"
-    { html = head ++# table; failures = ? ok ?> 0i32 |: 1i32 }
+    { name = workload_name w; prepared = p; certification = c; agreement = a; ok = ok }
 
+:~ ^ workload_report (salt : u32) (w : workload) : report =
+    := p = prepare salt 400u32 w
+    := all = rounds p 0i32 15i32 []
+    := f = facts_of salt w p all
+    { html = facts_head f ++# time_table (aa_band (spread_of (ratios MinimalAgainArm all))) all; failures = ? f::ok ?> 0i32 |: 1i32 }
 :~ ^ all_reports (salt : u32) (ws : list workload) (acc : report) : report =
     ?= ws ?|
     | w :: rest =>
@@ -234,10 +296,10 @@
     | [] => acc
 
 := stamp () : string =
-    "<p>commit " ++# env_text "GITHUB_SHA" ++# ", runner " ++# env_text "RUNNER_OS" ++# " " ++# env_text "RUNNER_ARCH" ++# ", seed 20261101, 9 rounds, 400 words per workload, arms rotated every round</p>\n"
+    "<p>commit " ++# env_text "GITHUB_SHA" ++# ", runner " ++# env_text "RUNNER_OS" ++# " " ++# env_text "RUNNER_ARCH" ++# ", seed 20261101, 15 rounds, 400 words x 25 passes per arm and round, arms rotated every round, wall time (Instant)</p>\n"
 
 := main () : i32 =
     := ~salt = 20261101u32
-    := r = all_reports salt [ EndsInZero; ZeroRuns; FourthFromEnd; CountedLetters ] { html = ""; failures = 0i32 }
+    := r = all_reports salt [ EndsInZero; ZeroRuns; FourthFromEnd; CountedLetters; FourthFromEndLong ] { html = ""; failures = 0i32 }
     print_line ("<!DOCTYPE html>\n<html><head><meta charset=\"UTF-8\"><title>regex benchmarks</title></head><body>\n<h1>regex benchmarks</h1>\n" ++# stamp () ++# r::html ++# "</body></html>")
     r::failures
