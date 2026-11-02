@@ -9,6 +9,7 @@ modules:
     derivative
     dfa
     minimal
+    table
     certificate
     partial
     agreement

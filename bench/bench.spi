@@ -3,6 +3,7 @@
 :< derivative
 :< dfa
 :< minimal
+:< table
 :< certificate
 :< partial
 :< agreement
@@ -48,7 +49,7 @@
     | CountedLetters => States 65i32
     | FourthFromEndLong => States 16i32
 
-:== prepared = { regex : re; eager : built; quotient : dfa; words : list (list u32); texts : list string; crate_regex : compiled_regex }
+:== prepared = { regex : re; eager : built; quotient : dfa; words : list (list u32); texts : list string; crate_regex : compiled_regex; table : table; arrays : list (array_base u32) }
 
 :~ ^ words_from (salt : u32) (turn : u32) (n : u32) (lows : list u32) (acc : list (list u32)) : list (list u32) =
     ? turn >= n ?> acc |: words_from salt (turn + 1u32) n lows (random_word salt turn lows :: acc)
@@ -71,10 +72,16 @@
     | FourthFromEndLong => long_texts salt 0u32 []
     | _ => words_from salt 0u32 n (lows_of (classes_of r)) []
 
+:~ ^ arrays_of (words : list (list u32)) : list (array_base u32) =
+    ?= words ?|
+    | w :: rest => array_of_codes w :: arrays_of rest
+    | [] => []
+
 :~ ^ prepare (salt : u32) (n : u32) (w : workload) : prepared =
     := r = workload_regex w
     := words = workload_words salt n w r
-    { regex = r; eager = build r; quotient = minimal_of r; words = words; texts = texts_of words; crate_regex = compile_regex (crate_pattern w) }
+    := m = minimal_of r
+    { regex = r; eager = build r; quotient = m; words = words; texts = texts_of words; crate_regex = compile_regex (crate_pattern w); table = table_of m; arrays = arrays_of words }
 
 :| arm =
     | BrzozowskiArm
@@ -83,6 +90,7 @@
     | MinimalArm
     | MinimalAgainArm
     | RegexCrateArm
+    | TableArm
 
 :~ ^ answer (a : arm) (p : prepared) (w : list u32) : verdict =
     ?= a ?|
@@ -92,6 +100,7 @@
     | MinimalArm => run p::quotient w
     | MinimalAgainArm => run p::quotient w
     | RegexCrateArm => run p::quotient w
+    | TableArm => run p::quotient w
 
 :~ ^ accepted (a : arm) (p : prepared) (words : list (list u32)) (n : i32) : i32 =
     ?= words ?|
@@ -105,9 +114,15 @@
     | t :: rest => crate_accepted p rest (? regex_is_match p::crate_regex t ?> n + 1i32 |: n)
     | [] => n
 
+:~ ^ table_accepted (p : prepared) (arrays : list (array_base u32)) (n : i32) : i32 =
+    ?= arrays ?|
+    | a :: rest => table_accepted p rest (? table_run p::table a = Accepted ?> n + 1i32 |: n)
+    | [] => n
+
 := one_pass (a : arm) (p : prepared) : i32 =
     ?= a ?|
     | RegexCrateArm => crate_accepted p p::texts 0i32
+    | TableArm => table_accepted p p::arrays 0i32
     | _ => accepted a p p::words 0i32
 
 :~ ^ passes (a : arm) (p : prepared) (left : i32) (count : i32) : i32 =
@@ -130,10 +145,10 @@
         | a :: rest => rotated (k - 1i32) (listm::append rest [ a ])
         | [] => arms
 
-:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm; RegexCrateArm ]
+:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm; RegexCrateArm; TableArm ]
 
 :~ ^ rounds (p : prepared) (k : i32) (n : i32) (acc : list (list sample)) : list (list sample) =
-    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 6i32) (all_arms ())) p [] :: acc)
+    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 7i32) (all_arms ())) p [] :: acc)
 
 :~ ^ sample_of (a : arm) (samples : list sample) : sample =
     ?= samples ?|
@@ -201,6 +216,7 @@
     | MinimalArm => "minimal DFA (baseline A)"
     | MinimalAgainArm => "minimal DFA again (A/A)"
     | RegexCrateArm => "Rust regex crate 1.x (oracle and baseline B)"
+    | TableArm => "minimal DFA as an array table"
 
 := cell (text : string) : string = "<td>" ++# text ++# "</td>"
 
@@ -210,7 +226,7 @@
     := s = spread_of (ratios a all)
     ?= aa ?|
     | Ratio _ => "<tr>" ++# cell (arm_name a) ++# spread_cells s ++# "</tr>\n"
-    | Void v => "<tr>" ++# cell (arm_name a) ++# cell "VOID" ++# cell ("A/A " ++# milli_text v::middle ++# ", outside 0.95-1.05") ++# "</tr>\n"
+    | Void v => "<tr>" ++# cell (arm_name a) ++# cell ("VOID (" ++# milli_text s::middle ++# " unverified)") ++# cell ("A/A " ++# milli_text v::middle ++# ", outside 0.95-1.05") ++# "</tr>\n"
 
 :~ ^ counts_agree (all : list (list sample)) (count : i32) : bool =
     ?= all ?|
