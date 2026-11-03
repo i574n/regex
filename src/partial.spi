@@ -7,6 +7,8 @@
 :< nullable
 :< derivative
 :< dfa
+:< language
+:< lazy
 
 :~ ^ merge_terms (a : list re) (b : list re) : list re =
     ?= a ?|
@@ -129,6 +131,35 @@
         := size = support_size r
         ? size <= w + 1i32 ?> WithinBound (size, w + 1i32) |: OverBound (size, w + 1i32)
 
+:~ ^ alt_all (terms : list re) : re =
+    ?= terms ?|
+    | t :: rest => alt t (alt_all rest)
+    | [] => Nothing
+
+:~ ^ first_miss (left : re) (right : re) (ws : list (list u32)) : option (list u32) =
+    ?= ws ?|
+    | w :: rest => ? language_answer left w = language_answer right w ?> first_miss left right rest |: Some w
+    | [] => None
+
+:| reconstruction =
+    | Reconstructs : i32
+    | SplitsDiffer : u32 * list u32
+
+:~ ^ reconstruction_from (split : u32 -> re -> list re) (r : re) (lows : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
+    ?= lows ?|
+    | c :: rest =>
+        ?= first_miss (alt_all (split c r)) (derive c r) ws ?|
+        | Some w => SplitsDiffer (c, w)
+        | None => reconstruction_from split r rest ws (n + 1i32)
+    | [] => Reconstructs n
+
+:= reconstruction_by (split : u32 -> re -> list re) (r : re) : reconstruction = reconstruction_from split r (lows_of (classes_of r)) (words_upto 4i32 [ [] ] []) 0i32
+
+:= reconstructs (c : reconstruction) : bool =
+    ?= c ?|
+    | Reconstructs _ => !+
+    | SplitsDiffer _ => !-
+
 ///> rust
 ///> gleam
 :# partial_derivatives_split_an_alternation_into_terms =
@@ -152,3 +183,18 @@
 :# complement_is_outside_the_bound_fragment =
     := ~r = negate (ends_in_zero ())
     support_bound r |> _assert_eq OutsideFragment
+
+:= dropped_first (c : u32) (r : re) : list re =
+    ?= partials c r ?|
+    | _ :: rest => rest
+    | [] => []
+
+///> rust
+///> gleam
+:# the_partial_terms_of_each_class_rebuild_the_derivative =
+    listm::map (reconstruction_by partials) [ fourth_from_end (); zero_runs (); ends_in_zero () ] |> _assert_eq [ Reconstructs 4i32; Reconstructs 4i32; Reconstructs 4i32 ]
+
+///> rust
+///> gleam
+:# a_split_that_drops_a_term_is_caught_with_a_word =
+    reconstruction_by dropped_first (fourth_from_end ()) |> reconstructs |> _assert_eq !-

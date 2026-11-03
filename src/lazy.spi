@@ -1,0 +1,116 @@
+///- --package . --timeout 900000
+:# lazy static =
+    :< testing
+
+:< charset
+:< syntax
+:< nullable
+:< derivative
+:< dfa
+
+:! interned = i32
+
+:= interned_index (interned i) : i32 = i
+
+:| node =
+    | DeadNode
+    | Node : interned
+
+:== cache = { nodes : list (re * interned); count : i32; steps : list ((i32 * i32) * node) }
+
+:== engine = { classes : list code_range }
+
+:~ ^ find_node (r : re) (nodes : list (re * interned)) : option interned =
+    ?= nodes ?|
+    | (k, n) :: rest => ? same_re r k ?> Some n |: find_node r rest
+    | [] => None
+
+:~ ^ node_re (i : i32) (nodes : list (re * interned)) : re =
+    ?= nodes ?|
+    | (k, n) :: rest => ? interned_index n = i ?> k |: node_re i rest
+    | [] => Nothing
+
+:~ intern (r : re) (c : cache) : node * cache =
+    ? is_nothing r ?> DeadNode, c
+    |:
+        ?= find_node r c::nodes ?|
+        | Some n => Node n, c
+        | None => Node (interned c::count), { c ?| nodes = (r, interned c::count) :: c::nodes; count = c::count + 1i32 }
+
+:~ ^ memo_find (key : i32 * i32) (steps : list ((i32 * i32) * node)) : option node =
+    ?= steps ?|
+    | (k, v) :: rest => ? k = key ?> Some v |: memo_find key rest
+    | [] => None
+
+:~ step_lazy (e : engine) (n : interned) (code : u32) (c : cache) : node * cache =
+    := key = (interned_index n, class_index code e::classes 0i32)
+    ?= memo_find key c::steps ?|
+    | Some v => v, c
+    | None =>
+        := v, c = intern (derive code (node_re (interned_index n) c::nodes)) c
+        v, { c ?| steps = (key, v) :: c::steps }
+
+:~ ^ run_from_node (e : engine) (at : node) (codes : list u32) (c : cache) : verdict * cache =
+    ?= at ?|
+    | DeadNode => Rejected, c
+    | Node n =>
+        ?= codes ?|
+        | x :: rest =>
+            := next, c = step_lazy e n x c
+            run_from_node e next rest c
+        | [] => verdict_of (nullable (node_re (interned_index n) c::nodes)), c
+
+:= lazy_of (r : re) : engine * node * cache =
+    := start, c = intern r { nodes = []; count = 0i32; steps = [] }
+    { classes = classes_of r }, start, c
+
+:= run_lazy (r : re) (codes : list u32) : verdict * i32 =
+    := e, start, c = lazy_of r
+    := v, c = run_from_node e start codes c
+    v, c::count
+
+:~ ^ grow (ws : list (list u32)) : list (list u32) =
+    ?= ws ?|
+    | w :: rest => (48u32 :: w) :: (49u32 :: w) :: grow rest
+    | [] => []
+
+:~ ^ words_upto (n : i32) (layer : list (list u32)) (acc : list (list u32)) : list (list u32) =
+    ? n < 0i32 ?> acc |: words_upto (n - 1i32) (grow layer) (listm::append acc layer)
+
+:~ ^ disagreements (e : engine) (start : node) (b : built) (ws : list (list u32)) (c : cache) (n : i32) : i32 * i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := v, c = run_from_node e start w c
+        disagreements e start b rest c (? v = built_run b w ?> n |: n + 1i32)
+    | [] => n, c::count
+
+:= against_eager (r : re) : i32 * i32 =
+    := e, start, c = lazy_of r
+    disagreements e start (build r) (words_upto 6i32 [ [] ] []) c 0i32
+
+:= refused (s : size) : bool =
+    ?= s ?|
+    | Refused _ => !+
+    | States _ => !-
+
+///> rust
+///> gleam
+:# the_lazy_engine_agrees_with_the_eager_dfa_on_every_short_word =
+    := a = against_eager (fourth_from_end ())
+    := b = against_eager (zero_runs ())
+    := c = against_eager (ends_in_zero ())
+    (a, b, c) |> _assert_eq ((0i32, 16i32), (0i32, 4i32), (0i32, 2i32))
+
+///> rust
+///> gleam
+:# one_word_interns_only_the_states_it_visits =
+    := four = run_lazy (fourth_from_end ()) [ 49u32; 48u32; 48u32; 48u32 ]
+    := single = run_lazy (fourth_from_end ()) [ 48u32 ]
+    (four, single) |> _assert_eq ((Accepted, 5i32), (Rejected, 1i32))
+
+///> rust
+///> gleam
+:# the_lazy_engine_answers_where_the_eager_cap_refuses =
+    := ~r = fourth_from_end ()
+    := v, _ = run_lazy r [ 48u32; 49u32; 48u32; 49u32; 49u32 ]
+    (refused (size_of (build_within 4i32 r)), v) |> _assert_eq (!+, Accepted)

@@ -7,6 +7,7 @@
 :< derivative
 :< dfa
 :< minimal
+:< certificate
 
 :== table = { width : i32; dead : i32; start : i32; lows : array_base u32; next : array_base i32; accepting : array_base bool }
 
@@ -54,7 +55,8 @@
     := accepting : array_base bool = am'::create_base (n + 1i32)
     { width = k; dead = n; start = start; lows = lows; next = next; accepting = accepting }
 
-:~ table_of (d : dfa) : table =
+:~ table_of (a : automaton certified_phase) : table =
+    := d = automaton_dfa a
     := n = state_count d
     := t = empty_table n (count_classes d::classes 0i32) (index_of_target d::start n)
     fill_lows t::lows d::classes 0i32
@@ -95,10 +97,7 @@
     fill_codes a codes 0i32
     a
 
-:= minimal_table (r : re) : table =
-    ?= build r ?|
-    | Built d => table_of (minimize d)
-    | StateCapReached _ => table_of { classes = []; start = Dead; rows = []; regexes = [] }
+:= minimal_table (r : re) : table = table_of (certified_of r)
 
 := table_answer (r : re) (w : list u32) : verdict = table_run (minimal_table r) (array_of_codes w)
 

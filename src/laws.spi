@@ -1,0 +1,92 @@
+///- --package . --timeout 900000
+:# laws static =
+    :< testing
+
+:< charset
+:< syntax
+:< nullable
+:< derivative
+:< language
+
+:~ ^ normalize (r : re) : re =
+    ?= r ?|
+    | Seq (a, b) => seq (normalize a) (normalize b)
+    | Alt (a, b) => alt (normalize a) (normalize b)
+    | And (a, b) => both (normalize a) (normalize b)
+    | Not a => negate (normalize a)
+    | Star a => star (normalize a)
+    | Repeat (a, low, up) => repeat (normalize a) low up
+    | other => other
+
+:= atoms () : list re = [ Nothing; Epsilon; zero (); one () ]
+
+:~ ^ unary_of (xs : list re) : list re =
+    ?= xs ?|
+    | x :: rest => Not x :: Star x :: unary_of rest
+    | [] => []
+
+:~ ^ pairs_with (a : re) (bs : list re) : list re =
+    ?= bs ?|
+    | b :: rest => Seq (a, b) :: Alt (a, b) :: And (a, b) :: pairs_with a rest
+    | [] => []
+
+:~ ^ binary_of (xs : list re) (ys : list re) : list re =
+    ?= xs ?|
+    | x :: rest => listm::append (pairs_with x ys) (binary_of rest ys)
+    | [] => []
+
+:= deeper (xs : list re) : list re = listm::append (unary_of xs) (binary_of xs xs)
+
+:= depth_one () : list re = listm::append (atoms ()) (deeper (atoms ()))
+
+:= depth_two () : list re = listm::append (depth_one ()) (deeper (depth_one ()))
+
+:= short_words () : list (list u32) = [ []; [ 48u32 ]; [ 49u32 ]; [ 48u32; 48u32 ]; [ 48u32; 49u32 ]; [ 49u32; 48u32 ]; [ 49u32; 49u32 ] ]
+
+:| law =
+    | Constructors
+    | Idempotence
+    | Nullability
+    | Remainder
+    | Brzozowski
+
+:| laws_verdict =
+    | AllHold : i32
+    | Broken : law * re * list u32
+
+:~ word_laws (r : re) (n : re) (w : list u32) (checked : i32) : laws_verdict =
+    := l = language_answer r w
+    ? language_answer n w <> l ?> Broken (Constructors, r, w)
+    |? matches r w <> l ?> Broken (Brzozowski, r, w)
+    |:
+        ?= w ?|
+        | c :: rest => ? language_answer (derive c n) rest <> l ?> Broken (Remainder, r, w) |: AllHold (checked + 3i32)
+        | [] => ? verdict_of (nullable n) <> l ?> Broken (Nullability, r, w) |: AllHold (checked + 3i32)
+
+:~ ^ words_hold (r : re) (n : re) (ws : list (list u32)) (checked : i32) : laws_verdict =
+    ?= ws ?|
+    | w :: rest =>
+        ?= word_laws r n w checked ?|
+        | AllHold k => words_hold r n rest k
+        | broken => broken
+    | [] => AllHold checked
+
+:~ ^ laws_hold (rs : list re) (ws : list (list u32)) (checked : i32) : laws_verdict =
+    ?= rs ?|
+    | r :: rest =>
+        := n = normalize r
+        ? same_re (normalize n) n |> not ?> Broken (Idempotence, r, [])
+        |:
+            ?= words_hold r n ws (checked + 1i32) ?|
+            | AllHold k => laws_hold rest ws k
+            | broken => broken
+    | [] => AllHold checked
+
+///> rust
+///> gleam
+:# every_regex_of_depth_one_keeps_all_five_laws_on_every_short_word =
+    laws_hold (depth_one ()) (short_words ()) 0i32 |> _assert_eq (AllHold 1320i32)
+
+///> rust
+:# every_regex_of_depth_two_keeps_all_five_laws_on_every_short_word =
+    laws_hold (depth_two ()) (short_words ()) 0i32 |> _assert_eq (AllHold 241560i32)

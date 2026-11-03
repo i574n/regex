@@ -7,10 +7,14 @@ modules:
     syntax
     nullable
     derivative
+    language
     dfa
+    lazy
     minimal
-    table
     certificate
+    table
     partial
     agreement
+    semantics
+    laws
     xsd

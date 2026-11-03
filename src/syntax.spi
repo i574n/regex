@@ -73,6 +73,14 @@
 
 := universal () : re = Not Nothing
 
+:~ starred_twice (a : re) (b : re) : bool =
+    ?= a ?|
+    | Star _ =>
+        ?= b ?|
+        | Seq (h, _) => same_re a h
+        | _ => same_re a b
+    | _ => !-
+
 :~ ^ seq (a : re) (b : re) : re =
     ?= a ?|
     | Nothing => Nothing
@@ -82,7 +90,7 @@
         ?= b ?|
         | Nothing => Nothing
         | Epsilon => a
-        | _ => Seq (a, b)
+        | _ => ? starred_twice a b ?> b |: Seq (a, b)
 
 :~ ^ insert_leaf (leaf : re) (sorted : list re) : list re =
     ?= sorted ?|
@@ -177,6 +185,107 @@
 
 := bit () : re = alt (zero ()) (one ())
 
+:| canon_fault =
+    | SeqNotRightNested
+    | SeqWithUnit
+    | StarsRepeated
+    | AltNotNormal
+    | AndNotNormal
+    | DoubleNot
+    | StarOfTrivial
+    | RepeatNotReduced
+
+:| canon =
+    | Canonical
+    | Breaks : canon_fault * re
+
+:~ is_before (o : order) : bool =
+    ?= o ?|
+    | Before => !+
+    | _ => !-
+
+:~ is_trivial (r : re) : bool = is_nothing r || same_re r Epsilon
+
+:~ alt_head (r : re) : re =
+    ?= r ?|
+    | Alt (h, _) => h
+    | _ => r
+
+:~ and_head (r : re) : re =
+    ?= r ?|
+    | And (h, _) => h
+    | _ => r
+
+:~ seq_fault (x : re) (y : re) : option canon_fault =
+    ?= x ?|
+    | Seq _ => Some SeqNotRightNested
+    | _ => ? is_trivial x || is_trivial y ?> Some SeqWithUnit |? starred_twice x y ?> Some StarsRepeated |: None
+
+:~ alt_fault (x : re) (y : re) : option canon_fault =
+    ?= x ?|
+    | Alt _ => Some AltNotNormal
+    | _ => ? is_nothing x || is_nothing y || is_universal x || is_universal y || not (is_before (order_re x (alt_head y))) ?> Some AltNotNormal |: None
+
+:~ and_fault (x : re) (y : re) : option canon_fault =
+    ?= x ?|
+    | And _ => Some AndNotNormal
+    | _ => ? is_nothing x || is_nothing y || is_universal x || is_universal y || not (is_before (order_re x (and_head y))) ?> Some AndNotNormal |: None
+
+:~ star_fault (x : re) : option canon_fault =
+    ?= x ?|
+    | Star _ => Some StarOfTrivial
+    | _ => ? is_trivial x ?> Some StarOfTrivial |: None
+
+:~ not_fault (x : re) : option canon_fault =
+    ?= x ?|
+    | Not _ => Some DoubleNot
+    | _ => None
+
+:~ repeat_fault (x : re) (low : u32) (up : upper) : option canon_fault =
+    ?= up ?|
+    | Bounded n => ? is_trivial x || n = 0u32 || n < low || (low = 1u32 && n = 1u32) ?> Some RepeatNotReduced |: None
+    | Unbounded => ? is_trivial x || low = 0u32 ?> Some RepeatNotReduced |: None
+
+:~ shape_fault (r : re) : option canon_fault =
+    ?= r ?|
+    | Seq (x, y) => seq_fault x y
+    | Alt (x, y) => alt_fault x y
+    | And (x, y) => and_fault x y
+    | Not x => not_fault x
+    | Star x => star_fault x
+    | Repeat (x, low, up) => repeat_fault x low up
+    | _ => None
+
+:~ parts_of (r : re) : list re =
+    ?= r ?|
+    | Seq (x, y) => [ x; y ]
+    | Alt (x, y) => [ x; y ]
+    | And (x, y) => [ x; y ]
+    | Not x => [ x ]
+    | Star x => [ x ]
+    | Repeat (x, _, _) => [ x ]
+    | _ => []
+
+:~ then_canon (a : canon) (b : () -> canon) : canon =
+    ?= a ?|
+    | Canonical => b ()
+    | broken => broken
+
+:~ ^ all_canonical (k : re -> canon) (rs : list re) : canon =
+    ?= rs ?|
+    | x :: rest => then_canon (k x) (\ () => all_canonical k rest)
+    | [] => Canonical
+
+:~ ^ is_canonical (r : re) : canon =
+    ?= shape_fault r ?|
+    | Some f => Breaks (f, r)
+    | None => all_canonical is_canonical (parts_of r)
+
+:= fault_of (c : canon) : option canon_fault =
+    ?= c ?|
+    | Breaks (f, _) => Some f
+    | Canonical => None
+
 ///> rust
 ///> gleam
 :# alternation_is_sorted_and_deduplicated =
@@ -211,3 +320,18 @@
 ///> gleam
 :# the_universal_language_absorbs_alternation_and_is_the_unit_of_intersection =
     (is_universal (alt (bit ()) (universal ())), same_re (both (universal ()) (bit ())) (bit ())) |> _assert_eq (!+, !+)
+
+///> rust
+///> gleam
+:# two_equal_stars_in_a_row_collapse_to_one =
+    := ~b = star (bit ())
+    (same_re (seq b b) b, same_re (seq b (seq b (zero ()))) (seq b (zero ()))) |> _assert_eq (!+, !+)
+
+///> rust
+///> gleam
+:# hand_built_terms_name_the_canonical_rule_they_break =
+    := left_nested = fault_of (is_canonical (Seq (Seq (zero (), one ()), zero ())))
+    := unsorted = fault_of (is_canonical (Alt (one (), zero ())))
+    := double_star = fault_of (is_canonical (Star (Star (bit ()))))
+    := built = fault_of (is_canonical (seq (star (bit ())) (zero ())))
+    (left_nested, unsorted, double_star, built) |> _assert_eq (Some SeqNotRightNested, Some AltNotNormal, Some StarOfTrivial, None)

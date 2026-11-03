@@ -165,3 +165,13 @@
 :# an_empty_intersection_minimizes_to_no_live_state =
     := ~r = both (ends_in_zero ()) (negate (ends_in_zero ()))
     minimal_size (build r) |> _assert_eq (States 0i32)
+
+:= tri_cyclic_nonminimal () : re =
+    := a = code 97u32
+    seq (star (alt a (seq a a))) (alt (code 98u32) (code 99u32))
+
+///> rust
+///> gleam
+:# a_cyclic_ternary_pattern_has_more_derivatives_than_minimal_states =
+    := ~r = tri_cyclic_nonminimal ()
+    (size_of (build r), minimal_size (build r)) |> _assert_eq (States 4i32, States 2i32)

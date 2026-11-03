@@ -43,7 +43,7 @@
 :== answers = { brzozowski : verdict; antimirov : verdict; eager_dfa : verdict; minimal_dfa : verdict }
 
 := answers_of (r : re) (eager : built) (m : dfa) (w : list u32) : answers =
-    { brzozowski = matches r w; antimirov = nfa_matches r w; eager_dfa = built_run eager w; minimal_dfa = run m w }
+    { brzozowski = matches r w; antimirov = nfa_matches r w; eager_dfa = built_run eager w; minimal_dfa = run_unchecked m w }
 
 := agree (a : answers) : bool = (a::brzozowski = a::antimirov) && (a::brzozowski = a::eager_dfa) && (a::brzozowski = a::minimal_dfa)
 

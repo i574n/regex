@@ -7,6 +7,9 @@
 :< certificate
 :< partial
 :< agreement
+:< language
+:< semantics
+:< lazy
 :< sm'_operators
 :< host
 
@@ -80,8 +83,9 @@
 :~ ^ prepare (salt : u32) (n : u32) (w : workload) : prepared =
     := r = workload_regex w
     := words = workload_words salt n w r
-    := m = minimal_of r
-    { regex = r; eager = build r; quotient = m; words = words; texts = texts_of words; crate_regex = compile_regex (crate_pattern w); table = table_of m; arrays = arrays_of words }
+    := c = certified_of r
+    := m = automaton_dfa c
+    { regex = r; eager = build r; quotient = m; words = words; texts = texts_of words; crate_regex = compile_regex (crate_pattern w); table = table_of c; arrays = arrays_of words }
 
 :| arm =
     | BrzozowskiArm
@@ -91,16 +95,27 @@
     | MinimalAgainArm
     | RegexCrateArm
     | TableArm
+    | BacktrackingArm
+    | LazyArm
+
+:= backtracking_verdict (r : re) (w : list u32) : verdict =
+    ?= backtracking_answer r w ?|
+    | Reached v => verdict_of_oracle v
+    | OutsideFragment => Rejected
 
 :~ ^ answer (a : arm) (p : prepared) (w : list u32) : verdict =
     ?= a ?|
     | BrzozowskiArm => matches p::regex w
     | AntimirovArm => nfa_matches p::regex w
     | EagerArm => built_run p::eager w
-    | MinimalArm => run p::quotient w
-    | MinimalAgainArm => run p::quotient w
-    | RegexCrateArm => run p::quotient w
-    | TableArm => run p::quotient w
+    | MinimalArm => run_unchecked p::quotient w
+    | MinimalAgainArm => run_unchecked p::quotient w
+    | RegexCrateArm => run_unchecked p::quotient w
+    | TableArm => run_unchecked p::quotient w
+    | BacktrackingArm => backtracking_verdict p::regex w
+    | LazyArm =>
+        := v, _ = run_lazy p::regex w
+        v
 
 :~ ^ accepted (a : arm) (p : prepared) (words : list (list u32)) (n : i32) : i32 =
     ?= words ?|
@@ -119,9 +134,19 @@
     | a :: rest => table_accepted p rest (? table_run p::table a = Accepted ?> n + 1i32 |: n)
     | [] => n
 
+:~ ^ lazy_accepted (e : engine) (start : node) (words : list (list u32)) (c : cache) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest =>
+        := v, c = run_from_node e start w c
+        lazy_accepted e start rest c (? v = Accepted ?> n + 1i32 |: n)
+    | [] => n
+
 := one_pass (a : arm) (p : prepared) : i32 =
     ?= a ?|
     | RegexCrateArm => crate_accepted p p::texts 0i32
+    | LazyArm =>
+        := e, start, c = lazy_of p::regex
+        lazy_accepted e start p::words c 0i32
     | TableArm => table_accepted p p::arrays 0i32
     | _ => accepted a p p::words 0i32
 
@@ -145,10 +170,10 @@
         | a :: rest => rotated (k - 1i32) (listm::append rest [ a ])
         | [] => arms
 
-:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm; RegexCrateArm; TableArm ]
+:= all_arms () : list arm = [ BrzozowskiArm; AntimirovArm; EagerArm; MinimalArm; MinimalAgainArm; RegexCrateArm; TableArm; BacktrackingArm; LazyArm ]
 
 :~ ^ rounds (p : prepared) (k : i32) (n : i32) (acc : list (list sample)) : list (list sample) =
-    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 7i32) (all_arms ())) p [] :: acc)
+    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 9i32) (all_arms ())) p [] :: acc)
 
 :~ ^ sample_of (a : arm) (samples : list sample) : sample =
     ?= samples ?|
@@ -217,6 +242,8 @@
     | MinimalAgainArm => "minimal DFA again (A/A)"
     | RegexCrateArm => "Rust regex crate 1.x (oracle and baseline B)"
     | TableArm => "minimal DFA as an array table"
+    | BacktrackingArm => "textbook backtracking (continuations, greedy star)"
+    | LazyArm => "lazy DFA (interned nodes, memoized steps)"
 
 := cell (text : string) : string = "<td>" ++# text ++# "</td>"
 

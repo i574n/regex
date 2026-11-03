@@ -145,7 +145,7 @@
     | c :: rest => run_from d (step d t c) rest
     | [] => verdict_at d t
 
-:= run (d : dfa) (codes : list u32) : verdict = run_from d d::start codes
+:= run_unchecked (d : dfa) (codes : list u32) : verdict = run_from d d::start codes
 
 :~ ^ state_count (d : dfa) : i32 = count_rows d::rows 0i32
 :& :~ count_rows (rows : list row) (n : i32) : i32 =
@@ -164,7 +164,7 @@
 
 := built_run (b : built) (codes : list u32) : verdict =
     ?= b ?|
-    | Built d => run d codes
+    | Built d => run_unchecked d codes
     | StateCapReached _ => Rejected
 
 ///> rust
