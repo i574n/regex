@@ -12,20 +12,24 @@
 :< partial
 :< agreement
 
+:~ oracle_agrees (r : re) (w : list u32) (a : answers) : bool = agree a && language_answer r w = a::brzozowski
+
 :~ ^ oracle_from (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (checked : i32) : agreement =
-    ? turn >= n ?> Agree checked
-    |:
-        := w = random_word salt turn (lows_of (classes_of r))
-        := a = answers_of r eager m w
-        ? agree a && language_answer r w = a::brzozowski ?> oracle_from r eager m salt (turn + 1u32) n (checked + 1i32) |: Disagree (w, a)
+    ? turn >= n ?> Agree checked |: oracle_step r eager m salt turn n checked
+
+:& :~ oracle_step (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (checked : i32) : agreement =
+    := w, a = word_answers r eager m salt turn
+    ? oracle_agrees r w a ?> oracle_from r eager m salt (turn + 1u32) n (checked + 1i32) |: Disagree (w, a)
 
 :~ ^ oracle_all (salt : u32) (n : u32) (patterns : list re) (total : i32) : agreement =
     ?= patterns ?|
-    | r :: rest =>
-        ?= oracle_from r (build r) (minimal_of r) salt 0u32 n 0i32 ?|
-        | Agree k => oracle_all salt n rest (total + k)
-        | d => d
+    | r :: rest => oracle_next salt n r rest total
     | [] => Agree total
+
+:& :~ oracle_next (salt : u32) (n : u32) (r : re) (rest : list re) (total : i32) : agreement =
+    ?= oracle_from r (build r) (minimal_of r) salt 0u32 n 0i32 ?|
+    | Agree k => oracle_all salt n rest (total + k)
+    | d => d
 
 :~ ^ backtrackable (r : re) : bool =
     ?= r ?|
@@ -33,6 +37,10 @@
     | Not _ => !-
     | Seq (a, b) => backtrackable a && backtrackable b
     | Alt (a, b) => backtrackable a && backtrackable b
+    | _ => backtrackable_rest r
+
+:& :~ backtrackable_rest (r : re) : bool =
+    ?= r ?|
     | Star a => backtrackable a
     | Repeat (a, _, _) => backtrackable a
     | _ => !+
@@ -41,20 +49,36 @@
     ?= r ?|
     | Nothing => !-
     | Epsilon => k p
-    | Set s => p < t::size && contains (code_at t::codes p) s && k (p + 1i32)
     | Seq (a, b) => bt a t p (\ q => bt b t q k)
+    | _ => bt_rest r t p k
+
+:& :~ bt_rest (r : re) (t : subject) (p : i32) (k : i32 -> bool) : bool =
+    ?= r ?|
+    | Set s => p < t::size && contains (code_at t::codes p) s && k (p + 1i32)
     | Alt (a, b) => bt a t p k || bt b t p k
+    | _ => bt_loop r t p k
+
+:& :~ bt_loop (r : re) (t : subject) (p : i32) (k : i32 -> bool) : bool =
+    ?= r ?|
     | Star a => bt_star a t p k
     | Repeat (a, low, up) => bt_repeat a t low up p k
     | _ => !-
+
 :& :~ bt_star (a : re) (t : subject) (p : i32) (k : i32 -> bool) : bool =
     bt a t p (\ q => q > p && bt_star a t q k) || k p
+
 :& :~ bt_repeat (a : re) (t : subject) (low : u32) (up : upper) (p : i32) (k : i32 -> bool) : bool =
-    ? low > 0u32 ?> bt a t p (\ q => bt_repeat a t (low - 1u32) (upper_less up) q k)
-    |:
-        ?= up ?|
-        | Unbounded => bt_star a t p k
-        | Bounded n => ? n = 0u32 ?> k p |: bt a t p (\ q => q > p && bt_repeat a t 0u32 (Bounded (n - 1u32)) q k) || k p
+    ? low > 0u32
+    ?> bt a t p \ q => bt_repeat a t (low - 1u32) (upper_less up) q k
+    |: bt_upto a t up p k
+
+:& :~ bt_upto (a : re) (t : subject) (up : upper) (p : i32) (k : i32 -> bool) : bool =
+    ?= up ?|
+    | Unbounded => bt_star a t p k
+    | Bounded n => bt_bounded a t n p k
+
+:& :~ bt_bounded (a : re) (t : subject) (n : u32) (p : i32) (k : i32 -> bool) : bool =
+    ? n = 0u32 ?> k p |: bt a t p (\ q => q > p && bt_repeat a t 0u32 (Bounded (n - 1u32)) q k) || k p
 
 :! by_language = ()
 :! by_backtracking = ()
@@ -72,10 +96,12 @@
     | LanguageVerdict x => x
     | BacktrackingVerdict x => x
 
+:= subject_of (codes : list u32) : subject = { codes = codes; size = code_count codes 0i32 }
+
 := backtracking_answer (r : re) (codes : list u32) : backtracking_reach =
     ? backtrackable r |> not ?> OutsideFragment
     |:
-        := t = { codes = codes; size = length_of codes 0i32 }
+        := t = subject_of codes
         Reached (BacktrackingVerdict (verdict_of (bt r t 0i32 (\ q => q = t::size))))
 
 := reached_verdict (x : backtracking_reach) : option verdict =
@@ -83,27 +109,48 @@
     | Reached v => Some (verdict_of_oracle v)
     | OutsideFragment => None
 
-:= oracles_agree (l : oracle_verdict by_language) (b : oracle_verdict by_backtracking) : bool = verdict_of_oracle l = verdict_of_oracle b
+:= oracles_agree (l : oracle_verdict by_language) (b : oracle_verdict by_backtracking) : bool =
+    verdict_of_oracle l = verdict_of_oracle b
 
 :| oracle_agreement =
     | OraclesAgree : i32
     | OraclesDiffer : list u32
 
+:| reach_step =
+    | Agreed
+    | Outside
+    | Differed
+
+:~ reach_step_of (r : re) (w : list u32) : reach_step =
+    ?= backtracking_answer r w ?|
+    | Reached b => ? oracles_agree (LanguageVerdict (language_answer r w)) b ?> Agreed |: Differed
+    | OutsideFragment => Outside
+
+:~ bump (s : reach_step) : i32 =
+    ?= s ?|
+    | Agreed => 1i32
+    | _ => 0i32
+
+:~ word_of (r : re) (salt : u32) (turn : u32) : list u32 = random_word salt turn (lows_of (classes_of r))
+
 :~ ^ oracles_from (r : re) (salt : u32) (turn : u32) (n : u32) (checked : i32) : oracle_agreement =
-    ? turn >= n ?> OraclesAgree checked
-    |:
-        := w = random_word salt turn (lows_of (classes_of r))
-        ?= backtracking_answer r w ?|
-        | Reached b => ? oracles_agree (LanguageVerdict (language_answer r w)) b ?> oracles_from r salt (turn + 1u32) n (checked + 1i32) |: OraclesDiffer w
-        | OutsideFragment => oracles_from r salt (turn + 1u32) n checked
+    ? turn >= n ?> OraclesAgree checked |: oracles_step r salt turn n checked
+
+:& :~ oracles_step (r : re) (salt : u32) (turn : u32) (n : u32) (checked : i32) : oracle_agreement =
+    := w = word_of r salt turn
+    ?= reach_step_of r w ?|
+    | Differed => OraclesDiffer w
+    | s => oracles_from r salt (turn + 1u32) n (checked + bump s)
 
 :~ ^ oracles_all (salt : u32) (n : u32) (patterns : list re) (total : i32) : oracle_agreement =
     ?= patterns ?|
-    | r :: rest =>
-        ?= oracles_from r salt 0u32 n 0i32 ?|
-        | OraclesAgree k => oracles_all salt n rest (total + k)
-        | d => d
+    | r :: rest => oracles_next salt n r rest total
     | [] => OraclesAgree total
+
+:& :~ oracles_next (salt : u32) (n : u32) (r : re) (rest : list re) (total : i32) : oracle_agreement =
+    ?= oracles_from r salt 0u32 n 0i32 ?|
+    | OraclesAgree k => oracles_all salt n rest (total + k)
+    | d => d
 
 :~ ^ zeros (n : i32) : list u32 = ? n <= 0i32 ?> [] |: 48u32 :: zeros (n - 1i32)
 
@@ -113,12 +160,18 @@
     := ~salt = 20261101u32
     oracles_all salt 40u32 (curated ()) 0i32 |> _assert_eq (OraclesAgree 200i32)
 
+:~ redos () : re = seq (star (alt (zero ()) (seq (zero ()) (zero ())))) (one ())
+
 ///> rust
 ///> gleam
 :# the_redos_shape_still_gets_the_right_answer_by_backtracking =
-    := ~r = seq (star (alt (zero ()) (seq (zero ()) (zero ())))) (one ())
     := w = zeros 12i32
-    (reached_verdict (backtracking_answer r w), language_answer r w, reached_verdict (backtracking_answer r (listm::append w [ 49u32 ]))) |> _assert_eq (Some Rejected, Rejected, Some Accepted)
+    (reached_verdict (backtracking_answer (redos ()) w), language_answer (redos ()) w) |> _assert_eq (Some Rejected, Rejected)
+
+///> rust
+///> gleam
+:# the_redos_shape_accepts_once_the_final_one_arrives =
+    reached_verdict (backtracking_answer (redos ()) (listm::append (zeros 12i32) [ 49u32 ])) |> _assert_eq (Some Accepted)
 
 ///> rust
 :# an_oracle_is_never_compared_with_itself fails "Unification failure" =

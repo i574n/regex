@@ -36,9 +36,20 @@
     ?= r ?|
     | Set s => ? contains c s ?> [ Epsilon ] |: []
     | Alt (a, b) => merge_terms (partials c a) (partials c b)
-    | Seq (a, b) => merge_terms (seq_each (partials c a) b []) (? nullable a ?> partials c b |: [])
+    | Seq (a, b) => partials_seq c a b
+    | _ => partials_rest c r
+
+:& :~ partials_seq (c : u32) (a : re) (b : re) : list re =
+    merge_terms (seq_each (partials c a) b []) (? nullable a ?> partials c b |: [])
+
+:& :~ partials_rest (c : u32) (r : re) : list re =
+    ?= r ?|
     | Star a => seq_each (partials c a) r []
     | Repeat (a, low, up) => seq_each (partials c a) (repeat a (one_less low) (upper_less up)) []
+    | _ => partials_logic c r
+
+:& :~ partials_logic (c : u32) (r : re) : list re =
+    ?= r ?|
     | And (a, b) => cross_both (partials c a) (partials c b) []
     | Not _ => singleton_unless_nothing (derive c r)
     | _ => []
@@ -110,9 +121,17 @@
     ?= r ?|
     | Set _ => Width 1i32
     | Seq (a, b) => add_width (alphabetic_width a) (alphabetic_width b)
+    | _ => width_rest r
+
+:& :~ width_rest (r : re) : width =
+    ?= r ?|
     | Alt (a, b) => add_width (alphabetic_width a) (alphabetic_width b)
     | Star a => alphabetic_width a
     | Repeat (a, low, up) => times_width (copies low up) (alphabetic_width a)
+    | _ => width_logic r
+
+:& :~ width_logic (r : re) : width =
+    ?= r ?|
     | And _ => NoWidth
     | Not _ => NoWidth
     | _ => Width 0i32
@@ -122,13 +141,13 @@
     | OverBound : i32 * i32
     | OutsideFragment
 
-:= support_size (r : re) : i32 = count_terms (support (lows_of (classes_of r)) [ r ] [ r ]) 0i32
+:= support_count (r : re) : i32 = count_terms (support (lows_of (classes_of r)) [ r ] [ r ]) 0i32
 
 := support_bound (r : re) : bound =
     ?= alphabetic_width r ?|
     | NoWidth => OutsideFragment
     | Width w =>
-        := size = support_size r
+        := size = support_count r
         ? size <= w + 1i32 ?> WithinBound (size, w + 1i32) |: OverBound (size, w + 1i32)
 
 :~ ^ alt_all (terms : list re) : re =
@@ -145,15 +164,23 @@
     | Reconstructs : i32
     | SplitsDiffer : u32 * list u32
 
-:~ ^ reconstruction_from (split : u32 -> re -> list re) (r : re) (lows : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
+:== splitter = u32 -> re -> list re
+
+:~ miss_at (split : splitter) (r : re) (c : u32) (ws : list (list u32)) : option (list u32) =
+    first_miss (alt_all (split c r)) (derive c r) ws
+
+:~ ^ reconstruction_from (split : splitter) (r : re) (lows : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
     ?= lows ?|
-    | c :: rest =>
-        ?= first_miss (alt_all (split c r)) (derive c r) ws ?|
-        | Some w => SplitsDiffer (c, w)
-        | None => reconstruction_from split r rest ws (n + 1i32)
+    | c :: rest => reconstruct_at split r c rest ws n
     | [] => Reconstructs n
 
-:= reconstruction_by (split : u32 -> re -> list re) (r : re) : reconstruction = reconstruction_from split r (lows_of (classes_of r)) (words_upto 4i32 [ [] ] []) 0i32
+:& :~ reconstruct_at (split : splitter) (r : re) (c : u32) (rest : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
+    ?= miss_at split r c ws ?|
+    | Some w => SplitsDiffer (c, w)
+    | None => reconstruction_from split r rest ws (n + 1i32)
+
+:= reconstruction_by (split : splitter) (r : re) : reconstruction =
+    reconstruction_from split r (lows_of (classes_of r)) (words_upto 4i32 [ [] ] []) 0i32
 
 := reconstructs (c : reconstruction) : bool =
     ?= c ?|
@@ -170,7 +197,8 @@
 ///> gleam
 :# the_term_set_matcher_agrees_on_zero_runs =
     := ~n = 20u32
-    (nfa_matches (zero_runs ()) (zeros_then_one n), nfa_matches (zero_runs ()) (zeros n [])) |> _assert_eq (Accepted, Rejected)
+    (nfa_matches (zero_runs ()) (zeros_then_one n), nfa_matches (zero_runs ()) (zeros n []))
+    |> _assert_eq (Accepted, Rejected)
 
 ///> rust
 ///> gleam
@@ -184,6 +212,63 @@
     := ~r = negate (ends_in_zero ())
     support_bound r |> _assert_eq OutsideFragment
 
+:| origins =
+    | Injective : i32
+    | Orphaned : i32
+    | OutsideFragment
+
+:~ ^ in_fragment (r : re) : bool =
+    ?= r ?|
+    | Seq (a, b) => in_fragment a && in_fragment b
+    | Alt (a, b) => in_fragment a && in_fragment b
+    | Star a => in_fragment a
+    | Set _ => !+
+    | Epsilon => !+
+    | Nothing => !+
+    | _ => !-
+
+:~ ^ conts_of (r : re) (tail : re) (acc : list re) : list re =
+    ?= r ?|
+    | Set _ => tail :: acc
+    | Seq (a, b) => conts_of a (seq b tail) (conts_of b tail acc)
+    | _ => conts_rest r tail acc
+
+:& :~ conts_rest (r : re) (tail : re) (acc : list re) : list re =
+    ?= r ?|
+    | Alt (a, b) => conts_of a tail (conts_of b tail acc)
+    | Star a => conts_of a (seq r tail) acc
+    | _ => acc
+
+:~ ^ has_index (i : i32) (used : list i32) : bool =
+    ?= used ?|
+    | u :: rest => u = i || has_index i rest
+    | [] => !-
+
+:~ ^ claim (t : re) (conts : list re) (used : list i32) (i : i32) : option i32 =
+    ?= conts ?|
+    | c :: rest => ? same_re c t && not (has_index i used) ?> Some i |: claim t rest used (i + 1i32)
+    | [] => None
+
+:~ ^ assign (r : re) (conts : list re) (terms : list re) (used : list i32) (k : i32) : origins =
+    ?= terms ?|
+    | t :: rest => assign_term r conts t rest used k
+    | [] => Injective (listm::length used)
+
+:& :~ assign_term (r : re) (conts : list re) (t : re) (rest : list re) (used : list i32) (k : i32) : origins =
+    ?= claim t conts used 0i32 ?|
+    | Some i => assign r conts rest (i :: used) (k + 1i32)
+    | None => assign_unclaimed r conts t rest used k
+
+:& :~ assign_unclaimed (r : re) (conts : list re) (t : re) (rest : list re) (used : list i32) (k : i32) : origins =
+    ? same_re t r ?> assign r conts rest used (k + 1i32) |: Orphaned k
+
+:= origins_of (r : re) (terms : list re) : origins =
+    ? in_fragment r |> not ?> OutsideFragment |: assign r (conts_of r Epsilon []) terms [] 0i32
+
+:= origins (r : re) : origins = origins_of r (support (lows_of (classes_of r)) [ r ] [ r ])
+
+:= abb () : re = seq (star (alt (code 97u32) (code 98u32))) (word [ 97u32; 98u32; 98u32 ])
+
 := dropped_first (c : u32) (r : re) : list re =
     ?= partials c r ?|
     | _ :: rest => rest
@@ -192,9 +277,26 @@
 ///> rust
 ///> gleam
 :# the_partial_terms_of_each_class_rebuild_the_derivative =
-    listm::map (reconstruction_by partials) [ fourth_from_end (); zero_runs (); ends_in_zero () ] |> _assert_eq [ Reconstructs 4i32; Reconstructs 4i32; Reconstructs 4i32 ]
+    listm::map (reconstruction_by partials) [ fourth_from_end (); zero_runs (); ends_in_zero () ]
+    |> _assert_eq [ Reconstructs 4i32; Reconstructs 4i32; Reconstructs 4i32 ]
 
 ///> rust
 ///> gleam
 :# a_split_that_drops_a_term_is_caught_with_a_word =
     reconstruction_by dropped_first (fourth_from_end ()) |> reconstructs |> _assert_eq !-
+
+///> rust
+///> gleam
+:# every_antimirov_term_has_its_own_origin_position =
+    := runs, ends, classic = (origins (zero_runs ()), origins (ends_in_zero ()), origins (abb ()))
+    (runs, ends, classic) |> _assert_eq (Injective 3i32, Injective 2i32, Injective 4i32)
+
+///> rust
+///> gleam
+:# a_term_no_position_continues_is_orphaned =
+    origins_of (abb ()) [ abb (); code 99u32 ] |> _assert_eq (Orphaned 1i32)
+
+///> rust
+///> gleam
+:# a_complement_is_outside_the_fragment =
+    origins (both (star (bit ())) (negate (ends_in_zero ()))) |> _assert_eq OutsideFragment

@@ -18,3 +18,4 @@ modules:
     semantics
     laws
     xsd
+    typed

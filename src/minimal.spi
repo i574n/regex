@@ -22,10 +22,12 @@
     | To s => bool_at (state_index s) live
 
 :~ ^ live_after (d : dfa) (live : list bool) : list bool = live_rows d::rows live
+
 :& :~ live_rows (rows : list row) (live : list bool) : list bool =
     ?= rows ?|
     | r :: rest => (r::accepting = Accepted || any_live r::next live) :: live_rows rest live
     | [] => []
+
 :& :~ any_live (next : list target) (live : list bool) : bool =
     ?= next ?|
     | t :: rest => is_live t live || any_live rest live
@@ -67,24 +69,30 @@
 
 :== refined = { blocks : list block; seen : list (signature * i32); count : i32 }
 
+:~ new_block (s : signature) (acc : refined) : refined =
+    { blocks = Block acc::count :: acc::blocks; seen = (s, acc::count) :: acc::seen; count = acc::count + 1i32 }
+
 :~ assign (s : signature) (acc : refined) : refined =
     ?= signature_id s acc::seen ?|
     | FoundAt known => { acc ?| blocks = Block known :: acc::blocks }
-    | Missing => { blocks = Block acc::count :: acc::blocks; seen = (s, acc::count) :: acc::seen; count = acc::count + 1i32 }
+    | Missing => new_block s acc
+
+:~ refined_at (index : i32) (r : row) (blocks : list block) (acc : refined) : refined =
+    ?= block_at index blocks ?|
+    | DeadBlock => { acc ?| blocks = DeadBlock :: acc::blocks }
+    | own => assign { own = own; moves = blocks_of_targets r::next blocks } acc
 
 :~ ^ refine_rows (rows : list row) (index : i32) (blocks : list block) (acc : refined) : refined =
     ?= rows ?|
-    | r :: rest =>
-        ?= block_at index blocks ?|
-        | DeadBlock => refine_rows rest (index + 1i32) blocks { acc ?| blocks = DeadBlock :: acc::blocks }
-        | own => refine_rows rest (index + 1i32) blocks (assign { own = own; moves = blocks_of_targets r::next blocks } acc)
+    | r :: rest => refine_rows rest (index + 1i32) blocks (refined_at index r blocks acc)
     | [] => { acc ?| blocks = listm::rev acc::blocks }
+
+:~ initial_block (r : row) (live : list bool) (index : i32) : block =
+    ? bool_at index live = !- ?> DeadBlock |? r::accepting = Accepted ?> Block 1i32 |: Block 0i32
 
 :~ ^ initial_blocks (rows : list row) (live : list bool) (index : i32) : list block =
     ?= rows ?|
-    | r :: rest =>
-        := b = ? bool_at index live = !- ?> DeadBlock |? r::accepting = Accepted ?> Block 1i32 |: Block 0i32
-        b :: initial_blocks rest live (index + 1i32)
+    | r :: rest => initial_block r live index :: initial_blocks rest live (index + 1i32)
     | [] => []
 
 :~ ^ has_id (id : i32) (seen : list i32) : bool =
@@ -92,12 +100,17 @@
     | x :: rest => x = id || has_id id rest
     | [] => !-
 
+:~ new_id (b : block) (seen : list i32) : option i32 =
+    ?= b ?|
+    | Block id => ? has_id id seen ?> None |: Some id
+    | DeadBlock => None
+
 :~ ^ count_blocks (blocks : list block) (seen : list i32) (n : i32) : i32 =
     ?= blocks ?|
     | b :: rest =>
-        ?= b ?|
-        | DeadBlock => count_blocks rest seen n
-        | Block id => ? has_id id seen ?> count_blocks rest seen n |: count_blocks rest (id :: seen) (n + 1i32)
+        ?= new_id b seen ?|
+        | Some id => count_blocks rest (id :: seen) (n + 1i32)
+        | None => count_blocks rest seen n
     | [] => n
 
 :~ ^ moore (rows : list row) (blocks : list block) (count : i32) : list block * i32 =
@@ -129,17 +142,24 @@
     | b :: rest => block_target b :: block_targets rest
     | [] => []
 
+:~ quotient_row (d : dfa) (blocks : list block) (id : i32) : row * re =
+    := at = index_of_found (representative id blocks 0i32)
+    := r = row_at at d::rows
+    { accepting = r::accepting; next = block_targets (blocks_of_targets r::next blocks) }, re_nth at d::regexes
+
 :~ ^ quotient_rows (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re) : list row * list re =
-    ? id < 0i32 ?> rows, regexes
-    |:
-        := at = index_of_found (representative id blocks 0i32)
-        := r = row_at at d::rows
-        := row = { accepting = r::accepting; next = block_targets (blocks_of_targets r::next blocks) }
-        quotient_rows d blocks (id - 1i32) count (row :: rows) (re_nth at d::regexes :: regexes)
+    ? id < 0i32 ?> rows, regexes |: quotient_more d blocks id count rows regexes
+
+:& :~ quotient_more (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re) : list row * list re =
+    := row, x = quotient_row d blocks id
+    quotient_rows d blocks (id - 1i32) count (row :: rows) (x :: regexes)
+
+:~ minimal_blocks (d : dfa) : list block * i32 =
+    := blocks0 = initial_blocks d::rows (live_states d) 0i32
+    moore d::rows blocks0 (count_blocks blocks0 [] 0i32)
 
 :~ minimize (d : dfa) : dfa =
-    := blocks0 = initial_blocks d::rows (live_states d) 0i32
-    := blocks, count = moore d::rows blocks0 (count_blocks blocks0 [] 0i32)
+    := blocks, count = minimal_blocks d
     := rows, regexes = quotient_rows d blocks (count - 1i32) count [] []
     { classes = d::classes; start = block_target (block_of d::start blocks); rows = rows; regexes = regexes }
 

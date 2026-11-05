@@ -13,6 +13,10 @@
     | Seq (a, b) => seq (normalize a) (normalize b)
     | Alt (a, b) => alt (normalize a) (normalize b)
     | And (a, b) => both (normalize a) (normalize b)
+    | _ => normalize_unary r
+
+:& :~ normalize_unary (r : re) : re =
+    ?= r ?|
     | Not a => negate (normalize a)
     | Star a => star (normalize a)
     | Repeat (a, low, up) => repeat (normalize a) low up
@@ -41,7 +45,8 @@
 
 := depth_two () : list re = listm::append (depth_one ()) (deeper (depth_one ()))
 
-:= short_words () : list (list u32) = [ []; [ 48u32 ]; [ 49u32 ]; [ 48u32; 48u32 ]; [ 48u32; 49u32 ]; [ 49u32; 48u32 ]; [ 49u32; 49u32 ] ]
+:= short_words () : list (list u32) =
+    [ []; [ 48u32 ]; [ 49u32 ]; [ 48u32; 48u32 ]; [ 48u32; 49u32 ]; [ 49u32; 48u32 ]; [ 49u32; 49u32 ] ]
 
 :| law =
     | Constructors
@@ -54,14 +59,27 @@
     | AllHold : i32
     | Broken : law * re * list u32
 
+:~ remainder_law (r : re) (n : re) (c : u32) (rest : list u32) (l : verdict) (checked : i32) : laws_verdict =
+    ? language_answer (derive c n) rest <> l ?> Broken (Remainder, r, c :: rest) |: AllHold (checked + 3i32)
+
+:~ nullability_law (r : re) (n : re) (l : verdict) (checked : i32) : laws_verdict =
+    ? verdict_of (nullable n) <> l ?> Broken (Nullability, r, []) |: AllHold (checked + 3i32)
+
+:~ front_broken (r : re) (n : re) (w : list u32) (l : verdict) : option laws_verdict =
+    ? language_answer n w <> l ?> Some (Broken (Constructors, r, w))
+    |? matches r w <> l ?> Some (Broken (Brzozowski, r, w))
+    |: None
+
+:~ tail_laws (r : re) (n : re) (w : list u32) (l : verdict) (checked : i32) : laws_verdict =
+    ?= w ?|
+    | c :: rest => remainder_law r n c rest l checked
+    | [] => nullability_law r n l checked
+
 :~ word_laws (r : re) (n : re) (w : list u32) (checked : i32) : laws_verdict =
     := l = language_answer r w
-    ? language_answer n w <> l ?> Broken (Constructors, r, w)
-    |? matches r w <> l ?> Broken (Brzozowski, r, w)
-    |:
-        ?= w ?|
-        | c :: rest => ? language_answer (derive c n) rest <> l ?> Broken (Remainder, r, w) |: AllHold (checked + 3i32)
-        | [] => ? verdict_of (nullable n) <> l ?> Broken (Nullability, r, w) |: AllHold (checked + 3i32)
+    ?= front_broken r n w l ?|
+    | Some b => b
+    | None => tail_laws r n w l checked
 
 :~ ^ words_hold (r : re) (n : re) (ws : list (list u32)) (checked : i32) : laws_verdict =
     ?= ws ?|
@@ -71,15 +89,16 @@
         | broken => broken
     | [] => AllHold checked
 
+:~ re_laws (r : re) (ws : list (list u32)) (checked : i32) : laws_verdict =
+    := n = normalize r
+    ? same_re (normalize n) n |> not ?> Broken (Idempotence, r, []) |: words_hold r n ws (checked + 1i32)
+
 :~ ^ laws_hold (rs : list re) (ws : list (list u32)) (checked : i32) : laws_verdict =
     ?= rs ?|
     | r :: rest =>
-        := n = normalize r
-        ? same_re (normalize n) n |> not ?> Broken (Idempotence, r, [])
-        |:
-            ?= words_hold r n ws (checked + 1i32) ?|
-            | AllHold k => laws_hold rest ws k
-            | broken => broken
+        ?= re_laws r ws checked ?|
+        | AllHold k => laws_hold rest ws k
+        | broken => broken
     | [] => AllHold checked
 
 ///> rust
