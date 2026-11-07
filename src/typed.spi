@@ -1,0 +1,176 @@
+///- --package . --timeout 900000
+:# typed static =
+    :< testing
+
+:< syntax
+:< derivative
+:< lazy
+:< fin_vector
+
+:== n1 = nat_succ nat_zero
+
+:== n2 = nat_succ n1
+
+:== n3 = nat_succ n2
+
+:== n4 = nat_succ n3
+
+:== n5 = nat_succ n4
+
+:== n6 = nat_succ n5
+
+:== n7 = nat_succ n6
+
+:== n8 = nat_succ n7
+
+:== n9 = nat_succ n8
+
+:== n10 = nat_succ n9
+
+:== n11 = nat_succ n10
+
+:== n12 = nat_succ n11
+
+:== n13 = nat_succ n12
+
+:== n14 = nat_succ n13
+
+:== n15 = nat_succ n14
+
+:== n16 = nat_succ n15
+
+:== bit_row = verdict * fin n16 * fin n16
+
+:= q0 () : fin n16 = FinFirst
+
+:= q1 () : fin n16 = FinNext FinFirst
+
+:= q2 () : fin n16 = FinNext (FinNext FinFirst)
+
+:= q3 () : fin n16 = FinNext (FinNext (FinNext FinFirst))
+
+:= q4 () : fin n16 = FinNext (FinNext (FinNext (FinNext FinFirst)))
+
+:= q5 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))
+
+:= q6 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))
+
+:= q7 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))
+
+:= q8 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))
+
+:= q9 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))
+
+:= q10 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))
+
+:= q11 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))
+
+:= q12 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))))
+
+:= q13 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))))
+
+:= q14 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))))))
+
+:= q15 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))))))
+
+:= r0 () : bit_row = Rejected, q0 (), q1 ()
+
+:= r1 () : bit_row = Rejected, q2 (), q3 ()
+
+:= r2 () : bit_row = Rejected, q4 (), q5 ()
+
+:= r3 () : bit_row = Rejected, q6 (), q7 ()
+
+:= r4 () : bit_row = Rejected, q8 (), q9 ()
+
+:= r5 () : bit_row = Rejected, q10 (), q11 ()
+
+:= r6 () : bit_row = Rejected, q12 (), q13 ()
+
+:= r7 () : bit_row = Rejected, q14 (), q15 ()
+
+:= r8 () : bit_row = Accepted, q0 (), q1 ()
+
+:= r9 () : bit_row = Accepted, q2 (), q3 ()
+
+:= r10 () : bit_row = Accepted, q4 (), q5 ()
+
+:= r11 () : bit_row = Accepted, q6 (), q7 ()
+
+:= r12 () : bit_row = Accepted, q8 (), q9 ()
+
+:= r13 () : bit_row = Accepted, q10 (), q11 ()
+
+:= r14 () : bit_row = Accepted, q12 (), q13 ()
+
+:= r15 () : bit_row = Accepted, q14 (), q15 ()
+
+:= v1 () : vector n1 bit_row = VectorCons (r15 (), VectorEnd)
+
+:= v2 () : vector n2 bit_row = VectorCons (r14 (), v1 ())
+
+:= v3 () : vector n3 bit_row = VectorCons (r13 (), v2 ())
+
+:= v4 () : vector n4 bit_row = VectorCons (r12 (), v3 ())
+
+:= v5 () : vector n5 bit_row = VectorCons (r11 (), v4 ())
+
+:= v6 () : vector n6 bit_row = VectorCons (r10 (), v5 ())
+
+:= v7 () : vector n7 bit_row = VectorCons (r9 (), v6 ())
+
+:= v8 () : vector n8 bit_row = VectorCons (r8 (), v7 ())
+
+:= v9 () : vector n9 bit_row = VectorCons (r7 (), v8 ())
+
+:= v10 () : vector n10 bit_row = VectorCons (r6 (), v9 ())
+
+:= v11 () : vector n11 bit_row = VectorCons (r5 (), v10 ())
+
+:= v12 () : vector n12 bit_row = VectorCons (r4 (), v11 ())
+
+:= v13 () : vector n13 bit_row = VectorCons (r3 (), v12 ())
+
+:= v14 () : vector n14 bit_row = VectorCons (r2 (), v13 ())
+
+:= v15 () : vector n15 bit_row = VectorCons (r1 (), v14 ())
+
+:= v16 () : vector n16 bit_row = VectorCons (r0 (), v15 ())
+
+:= fourth_core () : vector n16 bit_row = v16 ()
+
+:~ accepting_at \* n. (core : vector n (verdict * fin n * fin n)) (at : fin n) : verdict =
+    := accept, _, _ = item at core
+    accept
+
+:~ ^ run_core \* n. (core : vector n (verdict * fin n * fin n)) (at : fin n) (codes : list u32) : verdict =
+    ?= codes ?|
+    | c :: rest => run_step core at c rest
+    | [] => accepting_at core at
+
+:& :~ run_step \* n. (core : vector n (verdict * fin n * fin n)) (at : fin n) (c : u32) (rest : list u32) : verdict =
+    := _, on_zero, on_one = item at core
+    ? c = 48u32 ?> run_core core on_zero rest |? c = 49u32 ?> run_core core on_one rest |: Rejected
+
+:~ core_answer (w : list u32) : verdict = run_core (fourth_core ()) (q0 ()) w
+
+:~ ^ replay_misses (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => replay_misses rest (? core_answer w = matches (fourth_from_end ()) w ?> n |: n + 1i32)
+    | [] => n
+
+///> rust
+///> gleam
+:# the_typed_core_answers_like_the_derivatives_on_every_word_up_to_six =
+    (replay_misses (words_upto 6i32 [ [] ] []) 0i32, core_answer [ 49u32; 48u32; 48u32; 48u32 ], core_answer [ 50u32 ])
+    |> _assert_eq (0i32, Accepted, Rejected)
+
+///> rust
+:# a_core_one_row_short_does_not_type fails "Unification failure" =
+    := core : vector n16 bit_row = v15 ()
+    run_core core (q0 ()) [] |> _assert_eq Rejected
+
+///> rust
+:# a_target_past_the_last_state_does_not_type fails "Unification failure" =
+    := past : fin n2 = FinNext (FinNext FinFirst)
+    fin_value past |> _assert_eq 2i32
