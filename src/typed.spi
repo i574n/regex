@@ -2,8 +2,8 @@
 :# typed static =
     :< testing
 
-:< syntax
-:< derivative
+:< regex_syntax
+:< regex_derivative
 :< lazy
 :< fin_vector
 

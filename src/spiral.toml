@@ -1,12 +1,6 @@
-edition = 3
 packageDir = '../deps/spiral/lib'
 packages = ['|core-', 'spiral-']
 modules = '''
-charset
-syntax
-nullable
-derivative
-language
 dfa
 lazy
 minimal

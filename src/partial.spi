@@ -2,12 +2,12 @@
 :# partial static =
     :< testing
 
-:< charset
-:< syntax
-:< nullable
-:< derivative
+:< regex_charset
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
 :< dfa
-:< language
+:< regex_language
 :< lazy
 
 :~ ^ merge_terms (a : list re) (b : list re) : list re =

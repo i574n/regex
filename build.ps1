@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $notebooks = @(Get-ChildItem src -Filter *.spi | ForEach-Object { '--path'; $_.FullName })
 $env:SPIRAL_CELLS_MEMO = '0'
 $cellsStarted = Get-Date
-Push-Location (Join-Path 'deps' 'spiral' 'apps' 'cells')
+Push-Location ($env:SPIRAL_CELLS_ROOT ? $env:SPIRAL_CELLS_ROOT : (Join-Path 'deps' 'spiral' 'apps' 'cells'))
 try { $cells = @(& pwsh -NoProfile -File (Join-Path 'spi' 'run_notebook.ps1') --gate @notebooks 2>&1 | ForEach-Object { "$_" }); $cellsExit = $LASTEXITCODE }
 finally { Pop-Location }
 $cells | ForEach-Object { Write-Output "build.ps1 / cells / $_" }
@@ -26,8 +26,8 @@ if (!($cells -match '^spiral-tests total')) { throw "build.ps1 / Spiral test cel
 if (!(BuildSpiral bench/bench.spi bench/bench.rs "regex/bench")) {
     throw "RUST-FAILED regex/bench / compile"
 }
-{ cargo +nightly-2026-10-18 build --release } | Invoke-Block
-$cargoTarget = (cargo +nightly-2026-10-18 metadata --format-version 1 --no-deps | ConvertFrom-Json).target_directory
+{ cargo +nightly-2026-11-05 build --release } | Invoke-Block
+$cargoTarget = (cargo +nightly-2026-11-05 metadata --format-version 1 --no-deps | ConvertFrom-Json).target_directory
 if (!$cargoTarget) { throw "RUST-FAILED regex / cargo metadata found no target directory" }
 
 $report = @(& (Join-Path $cargoTarget 'release' "regex-bench$(_exe)"))

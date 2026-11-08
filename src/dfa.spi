@@ -2,10 +2,10 @@
 :# dfa static =
     :< testing
 
-:< charset
-:< syntax
-:< nullable
-:< derivative
+:< regex_charset
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
 
 :~ ^ insert_point (p : u32) (sorted : list u32) : list u32 =
     ?= sorted ?|

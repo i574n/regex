@@ -2,10 +2,10 @@
 :# semantics static =
     :< testing
 
-:< charset
-:< syntax
-:< derivative
-:< language
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_language
 :< dfa
 :< minimal
 :< certificate

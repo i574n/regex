@@ -1,13 +1,13 @@
-:< charset
-:< syntax
-:< derivative
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
 :< dfa
 :< minimal
 :< table
 :< certificate
 :< partial
 :< agreement
-:< language
+:< regex_language
 :< semantics
 :< lazy
 :< sm'_operators

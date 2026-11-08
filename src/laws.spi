@@ -2,11 +2,11 @@
 :# laws static =
     :< testing
 
-:< charset
-:< syntax
-:< nullable
-:< derivative
-:< language
+:< regex_charset
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
+:< regex_language
 
 :~ ^ normalize (r : re) : re =
     ?= r ?|

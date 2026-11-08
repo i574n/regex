@@ -2,13 +2,13 @@
 :# certificate static =
     :< testing
 
-:< charset
-:< syntax
-:< derivative
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
 :< dfa
-:< nullable
+:< regex_nullable
 :< minimal
-:< language
+:< regex_language
 
 :| equivalence =
     | Equivalent : i32
