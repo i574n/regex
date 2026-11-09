@@ -1,0 +1,17 @@
+[package]
+name = "regex-bench"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+repository = "https://github.com/i574n/regex"
+
+[package.metadata.spiral]
+entry = "bench.spi"
+output = "bench.rs"
+
+[[bin]]
+name = "regex-bench"
+path = "bench.rs"
+
+[dependencies]
+regex = "1"

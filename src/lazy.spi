@@ -1,0 +1,294 @@
+///- --package . --timeout 900000
+:# lazy static =
+    :< testing
+
+:< regex_charset
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
+:< dfa
+
+:! interned = i32
+
+:= interned_index (interned i) : i32 = i
+
+:| node =
+    | DeadNode
+    | Node : interned
+
+:== cache = { nodes : list (re * interned); count : i32; steps : list ((i32 * i32) * node) }
+
+:== engine = { classes : list code_range }
+
+:~ ^ find_node (r : re) (nodes : list (re * interned)) : option interned =
+    ?= nodes ?|
+    | (k, n) :: rest => ? same_re r k ?> Some n |: find_node r rest
+    | [] => None
+
+:~ ^ node_re (i : i32) (nodes : list (re * interned)) : re =
+    ?= nodes ?|
+    | (k, n) :: rest => ? interned_index n = i ?> k |: node_re i rest
+    | [] => Nothing
+
+:~ fresh_node (r : re) (c : cache) : node * cache =
+    Node (interned c::count), { c ?| nodes = (r, interned c::count) :: c::nodes; count = c::count + 1i32 }
+
+:~ intern (r : re) (c : cache) : node * cache =
+    ? is_nothing r
+    ?> DeadNode, c
+    |:
+        ?= find_node r c::nodes ?|
+        | Some n => Node n, c
+        | None => fresh_node r c
+
+:~ ^ memo_find (key : i32 * i32) (steps : list ((i32 * i32) * node)) : option node =
+    ?= steps ?|
+    | (k, v) :: rest => ? k = key ?> Some v |: memo_find key rest
+    | [] => None
+
+:~ stepped (key : i32 * i32) (n : interned) (code : u32) (c : cache) : node * cache =
+    := v, c = intern (derive code (node_re (interned_index n) c::nodes)) c
+    v, { c ?| steps = (key, v) :: c::steps }
+
+:~ step_lazy (e : engine) (n : interned) (code : u32) (c : cache) : node * cache =
+    := key = (interned_index n, class_index code e::classes 0i32)
+    ?= memo_find key c::steps ?|
+    | Some v => v, c
+    | None => stepped key n code c
+
+:~ node_verdict (n : interned) (c : cache) : verdict = verdict_of (nullable (node_re (interned_index n) c::nodes))
+
+:~ ^ run_from_node (e : engine) (at : node) (codes : list u32) (c : cache) : verdict * cache =
+    ?= at ?|
+    | DeadNode => Rejected, c
+    | Node n => run_node e n codes c
+
+:& :~ run_node (e : engine) (n : interned) (codes : list u32) (c : cache) : verdict * cache =
+    ?= codes ?|
+    | x :: rest =>
+        := next, c = step_lazy e n x c
+        run_from_node e next rest c
+    | [] => node_verdict n c, c
+
+:= lazy_of (r : re) : engine * node * cache =
+    := start, c = intern r { nodes = []; count = 0i32; steps = [] }
+    { classes = classes_of r }, start, c
+
+:= run_lazy (r : re) (codes : list u32) : verdict * i32 =
+    := e, start, c = lazy_of r
+    := v, c = run_from_node e start codes c
+    v, c::count
+
+:~ ^ grow (ws : list (list u32)) : list (list u32) =
+    ?= ws ?|
+    | w :: rest => (48u32 :: w) :: (49u32 :: w) :: grow rest
+    | [] => []
+
+:~ ^ words_upto (n : i32) (layer : list (list u32)) (acc : list (list u32)) : list (list u32) =
+    ? n < 0i32 ?> acc |: words_upto (n - 1i32) (grow layer) (listm::append acc layer)
+
+:~ count_miss (v : verdict) (b : built) (w : list u32) (n : i32) : i32 = ? v = built_run b w ?> n |: n + 1i32
+
+:~ ^ disagreements (e : engine) (at : node) (b : built) (ws : list (list u32)) (c : cache) (n : i32) : i32 * i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := v, c = run_from_node e at w c
+        disagreements e at b rest c (count_miss v b w n)
+    | [] => n, c::count
+
+:= against_eager (r : re) : i32 * i32 =
+    := e, start, c = lazy_of r
+    disagreements e start (build r) (words_upto 6i32 [ [] ] []) c 0i32
+
+:= refused (s : size) : bool =
+    ?= s ?|
+    | Refused _ => !+
+    | States _ => !-
+
+:== store =
+    {
+        width : i32
+        cap : i32
+        lows : array_base u32
+        steps : array_base (array_base i32)
+        nodes : array_base (array_base re)
+        links : array_base (array_base i32)
+        used : array_base i32
+    }
+
+:| store_answer =
+    | Answered : verdict
+    | Overflowed
+
+:~ nodes_of (s : store) : array_base re = am'::index_base 0i32 s::nodes
+
+:~ steps_of (s : store) : array_base i32 = am'::index_base 0i32 s::steps
+
+:~ links_of (s : store) : array_base i32 = am'::index_base 0i32 s::links
+
+:~ ^ fill_unknown (steps : array_base i32) (i : i32) (n : i32) : () =
+    ? i < n ?>
+        am'::set_base steps i -2i32
+        fill_unknown steps (i + 1i32) n
+
+:~ ^ fill_class_lows (lows : array_base u32) (classes : list code_range) (i : i32) : () =
+    ?= classes ?|
+    | c :: rest =>
+        am'::set_base lows i c::low
+        fill_class_lows lows rest (i + 1i32)
+    | [] => ()
+
+:~ ^ copy_into \* el. (a : array_base el) (b : array_base el) (i : i32) (n : i32) : () =
+    ? i < n ?>
+        am'::set_base b i (am'::index_base i a)
+        copy_into a b (i + 1i32) n
+
+:~ resized_copy \* el. (a : array_base el) (size : i32) (n : i32) : array_base el =
+    := b : array_base el = am'::create_base size
+    copy_into a b 0i32 n
+    b
+
+:~ regrow \* el. (cell : array_base (array_base el)) (size : i32) (n : i32) : () =
+    am'::set_base cell 0i32 (resized_copy (am'::index_base 0i32 cell) size n)
+
+:~ grow_to (s : store) (n : i32) (size : i32) : () =
+    regrow s::nodes size n
+    regrow s::steps (size * s::width) (n * s::width)
+    regrow s::links (2i32 * size) (2i32 * n)
+
+:~ class_lows (classes : list code_range) (k : i32) : array_base u32 =
+    := lows : array_base u32 = am'::create_base k
+    fill_class_lows lows classes 0i32
+    lows
+
+:~ counter_at (n : i32) : array_base i32 =
+    := used : array_base i32 = am'::create_base 1i32
+    am'::set_base used 0i32 n
+    used
+
+:~ new_store (k : i32) (cap : i32) (lows : array_base u32) : store =
+    {
+        width = k; cap = cap; lows = lows; used = counter_at 0i32
+        steps = am'::create_base 1i32; nodes = am'::create_base 1i32; links = am'::create_base 1i32
+    }
+
+:~ empty_store (r : re) (cap : i32) : store =
+    := classes = classes_of r
+    := k = listm::length classes
+    := s = new_store k cap (class_lows classes k)
+    grow_to s 0i32 (? cap < 16i32 ?> cap |: 16i32)
+    s
+
+:~ ^ class_in (lows : array_base u32) (c : u32) (lo : i32) (hi : i32) : i32 =
+    ? lo >= hi
+    ?> lo
+    |:
+        := mid = (lo + hi + 1i32) / 2i32
+        ? am'::index_base mid lows <= c ?> class_in lows c mid hi |: class_in lows c lo (mid - 1i32)
+
+:| slot =
+    | Found : i32
+    | Under : i32 * i32
+    | Root
+
+:~ side_of (o : order) : i32 =
+    ?= o ?|
+    | Same => -1i32
+    | Before => 0i32
+    | After => 1i32
+
+:~ ^ tree_slot (s : store) (r : re) (at : i32) : slot =
+    := side = side_of (order_re r (am'::index_base at (nodes_of s)))
+    ? side < 0i32 ?> Found at |: tree_next s r at side
+
+:& :~ tree_next (s : store) (r : re) (at : i32) (side : i32) : slot =
+    := next = am'::index_base (2i32 * at + side) (links_of s)
+    ? next < 0i32 ?> Under (at, side) |: tree_slot s r next
+
+:~ attach (s : store) (slot : slot) (n : i32) : () =
+    := links = links_of s
+    am'::set_base links (2i32 * n) -1i32
+    am'::set_base links (2i32 * n + 1i32) -1i32
+    ?= slot ?|
+    | Under (parent, side) => am'::set_base links (2i32 * parent + side) n
+    | _ => ()
+
+:~ ensure_room (s : store) (n : i32) : () =
+    := size = am'::length_base (nodes_of s)
+    ? n >= size ?> grow_to s n (? size * 2i32 < s::cap ?> size * 2i32 |: s::cap)
+
+:~ place (s : store) (r : re) (slot : slot) (n : i32) : i32 =
+    ensure_room s n
+    am'::set_base (nodes_of s) n r
+    attach s slot n
+    am'::set_base s::used 0i32 (n + 1i32)
+    fill_unknown (steps_of s) (n * s::width) (n * s::width + s::width)
+    n
+
+:~ intern_in (s : store) (r : re) : i32 =
+    := n = am'::index_base 0i32 s::used
+    := slot = ? n = 0i32 || is_nothing r ?> Root |: tree_slot s r 0i32
+    ?= slot ?|
+    | Found i => i
+    | _ => ? is_nothing r ?> -1i32 |? n >= s::cap ?> -3i32 |: place s r slot n
+
+:~ computed_step (s : store) (node : i32) (c : u32) (key : i32) : i32 =
+    := next = intern_in s (derive c (am'::index_base node (nodes_of s)))
+    am'::set_base (steps_of s) key next
+    next
+
+:~ step_in (s : store) (node : i32) (c : u32) : i32 =
+    := key = node * s::width + class_in s::lows c 0i32 (s::width - 1i32)
+    := known = am'::index_base key (steps_of s)
+    ? known <> -2i32 ?> known |: computed_step s node c key
+
+:~ ^ run_in (s : store) (node : i32) (codes : list u32) : store_answer =
+    ? node = -1i32 ?> Answered Rejected |? node = -3i32 ?> Overflowed |: run_on s node codes
+
+:& :~ run_on (s : store) (node : i32) (codes : list u32) : store_answer =
+    ?= codes ?|
+    | c :: rest => run_in s (step_in s node c) rest
+    | [] => Answered (verdict_of (nullable (am'::index_base node (nodes_of s))))
+
+:= store_of (r : re) (cap : i32) : store * i32 =
+    := s = empty_store r cap
+    s, intern_in s r
+
+:~ ^ store_misses (s : store) (start : i32) (b : built) (ws : list (list u32)) (n : i32) : i32 * i32 =
+    ?= ws ?|
+    | w :: rest => store_misses s start b rest (? run_in s start w = Answered (built_run b w) ?> n |: n + 1i32)
+    | [] => n, am'::index_base 0i32 s::used
+
+:= store_against_eager (r : re) : i32 * i32 =
+    := s, start = store_of r 4096i32
+    store_misses s start (build r) (words_upto 6i32 [ [] ] []) 0i32
+
+///> rust
+///> gleam
+:# the_lazy_engine_agrees_with_the_eager_dfa_on_every_short_word =
+    listm::map (\ r => against_eager r) [ fourth_from_end (); zero_runs (); ends_in_zero () ]
+    |> _assert_eq [ (0i32, 16i32); (0i32, 4i32); (0i32, 2i32) ]
+
+///> rust
+///> gleam
+:# one_word_interns_only_the_states_it_visits =
+    := four = run_lazy (fourth_from_end ()) [ 49u32; 48u32; 48u32; 48u32 ]
+    := single = run_lazy (fourth_from_end ()) [ 48u32 ]
+    (four, single) |> _assert_eq ((Accepted, 5i32), (Rejected, 1i32))
+
+///> rust
+///> gleam
+:# the_lazy_engine_answers_where_the_eager_cap_refuses =
+    := ~r = fourth_from_end ()
+    := v, _ = run_lazy r [ 48u32; 49u32; 48u32; 49u32; 49u32 ]
+    (refused (size_of (build_within 4i32 r)), v) |> _assert_eq (!+, Accepted)
+
+///> rust
+:# the_array_store_agrees_with_the_eager_dfa_and_interns_the_same_nodes =
+    listm::map (\ r => store_against_eager r) [ fourth_from_end (); zero_runs (); ends_in_zero () ]
+    |> _assert_eq [ (0i32, 16i32); (0i32, 4i32); (0i32, 2i32) ]
+
+///> rust
+:# a_full_store_answers_overflowed_instead_of_growing =
+    := s, start = store_of (fourth_from_end ()) 2i32
+    run_in s start [ 49u32; 48u32; 48u32; 48u32 ] |> _assert_eq Overflowed
