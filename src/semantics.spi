@@ -99,7 +99,8 @@
 := subject_of (codes : list u32) : subject = { codes = codes; size = code_count codes 0i32 }
 
 := backtracking_answer (r : re) (codes : list u32) : backtracking_reach =
-    ? backtrackable r |> not ?> OutsideFragment
+    ? backtrackable r |> not
+    ?> OutsideFragment
     |:
         := t = subject_of codes
         Reached (BacktrackingVerdict (verdict_of (bt r t 0i32 (\ q => q = t::size))))
@@ -166,12 +167,14 @@
 ///> gleam
 :# the_redos_shape_still_gets_the_right_answer_by_backtracking =
     := w = zeros 12i32
-    (reached_verdict (backtracking_answer (redos ()) w), language_answer (redos ()) w) |> _assert_eq (Some Rejected, Rejected)
+    (reached_verdict (backtracking_answer (redos ()) w), language_answer (redos ()) w)
+    |> _assert_eq (Some Rejected, Rejected)
 
 ///> rust
 ///> gleam
 :# the_redos_shape_accepts_once_the_final_one_arrives =
-    reached_verdict (backtracking_answer (redos ()) (listm::append (zeros 12i32) [ 49u32 ])) |> _assert_eq (Some Accepted)
+    reached_verdict (backtracking_answer (redos ()) (listm::append (zeros 12i32) [ 49u32 ]))
+    |> _assert_eq (Some Accepted)
 
 ///> rust
 :# an_oracle_is_never_compared_with_itself fails "Unification failure" =

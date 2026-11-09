@@ -147,10 +147,16 @@
     := r = row_at at d::rows
     { accepting = r::accepting; next = block_targets (blocks_of_targets r::next blocks) }, re_nth at d::regexes
 
-:~ ^ quotient_rows (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re) : list row * list re =
+:~ ^ quotient_rows
+    (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re)
+    : list row * list re
+    =
     ? id < 0i32 ?> rows, regexes |: quotient_more d blocks id count rows regexes
 
-:& :~ quotient_more (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re) : list row * list re =
+:& :~ quotient_more
+    (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re)
+    : list row * list re
+    =
     := row, x = quotient_row d blocks id
     quotient_rows d blocks (id - 1i32) count (row :: rows) (x :: regexes)
 

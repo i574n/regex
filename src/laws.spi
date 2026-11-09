@@ -66,8 +66,10 @@
     ? verdict_of (nullable n) <> l ?> Broken (Nullability, r, []) |: AllHold (checked + 3i32)
 
 :~ front_broken (r : re) (n : re) (w : list u32) (l : verdict) : option laws_verdict =
-    ? language_answer n w <> l ?> Some (Broken (Constructors, r, w))
-    |? matches r w <> l ?> Some (Broken (Brzozowski, r, w))
+    ? language_answer n w <> l
+    ?> Some (Broken (Constructors, r, w))
+    |? matches r w <> l
+    ?> Some (Broken (Brzozowski, r, w))
     |: None
 
 :~ tail_laws (r : re) (n : re) (w : list u32) (l : verdict) (checked : i32) : laws_verdict =

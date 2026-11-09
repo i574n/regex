@@ -169,12 +169,18 @@
 :~ miss_at (split : splitter) (r : re) (c : u32) (ws : list (list u32)) : option (list u32) =
     first_miss (alt_all (split c r)) (derive c r) ws
 
-:~ ^ reconstruction_from (split : splitter) (r : re) (lows : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
+:~ ^ reconstruction_from
+    (split : splitter) (r : re) (lows : list u32) (ws : list (list u32)) (n : i32)
+    : reconstruction
+    =
     ?= lows ?|
     | c :: rest => reconstruct_at split r c rest ws n
     | [] => Reconstructs n
 
-:& :~ reconstruct_at (split : splitter) (r : re) (c : u32) (rest : list u32) (ws : list (list u32)) (n : i32) : reconstruction =
+:& :~ reconstruct_at
+    (split : splitter) (r : re) (c : u32) (rest : list u32) (ws : list (list u32)) (n : i32)
+    : reconstruction
+    =
     ?= miss_at split r c ws ?|
     | Some w => SplitsDiffer (c, w)
     | None => reconstruction_from split r rest ws (n + 1i32)

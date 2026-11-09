@@ -34,7 +34,8 @@
     Node (interned c::count), { c ?| nodes = (r, interned c::count) :: c::nodes; count = c::count + 1i32 }
 
 :~ intern (r : re) (c : cache) : node * cache =
-    ? is_nothing r ?> DeadNode, c
+    ? is_nothing r
+    ?> DeadNode, c
     |:
         ?= find_node r c::nodes ?|
         | Some n => Node n, c
@@ -179,7 +180,8 @@
     s
 
 :~ ^ class_in (lows : array_base u32) (c : u32) (lo : i32) (hi : i32) : i32 =
-    ? lo >= hi ?> lo
+    ? lo >= hi
+    ?> lo
     |:
         := mid = (lo + hi + 1i32) / 2i32
         ? am'::index_base mid lows <= c ?> class_in lows c mid hi |: class_in lows c lo (mid - 1i32)

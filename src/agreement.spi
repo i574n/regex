@@ -35,7 +35,8 @@
     | [] => n
 
 :~ ^ letters (salt : u32) (turn : u32) (lows : list u32) (i : u32) (n : u32) (acc : list u32) : list u32 =
-    ? i >= n ?> acc
+    ? i >= n
+    ?> acc
     |: letters salt turn lows (i + 1u32) n (u32_at (draw_at salt turn (Letter i) % count_u32 lows 0u32) lows :: acc)
 
 := random_word (salt : u32) (turn : u32) (lows : list u32) : list u32 =
@@ -90,10 +91,14 @@
     | x :: rest => x = t || has_target t rest
     | [] => !-
 
+:~ queued (todo : list walk) (next : target) (w : walk) (c : u32) : list walk =
+    listm::append todo [ { at = next; word = c :: w::word } ]
+
 :~ visit (d : dfa) (w : walk) (c : u32) (seen : list target) (todo : list walk) : list walk * list target =
     := next = step d w::at c
-    ? next = Dead || has_target next seen ?> todo, seen
-    |: listm::append todo [ { at = next; word = c :: w::word } ], next :: seen
+    ? next = Dead || has_target next seen
+    ?> todo, seen
+    |: queued todo next w c, next :: seen
 
 :~ ^ walk_on (d : dfa) (w : walk) (lows : list u32) (seen : list target) (queue : list walk) : list walk * list target =
     ?= lows ?|

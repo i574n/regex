@@ -61,17 +61,30 @@
 
 := q9 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))
 
-:= q10 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))
+:= q10 () : fin n16 =
+    FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))
 
-:= q11 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))
+:= q11 () : fin n16 =
+    FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))
 
-:= q12 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))))
+:= q12 () : fin n16 =
+    FinNext (
+        FinNext (
+            FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))
+        )
+    )
 
-:= q13 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))))
+:= q13 () : fin n16 =
+    FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (
+        FinNext FinFirst))))))))))))
 
-:= q14 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst)))))))))))))
+:= q14 () : fin n16 =
+    FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (
+        FinNext (FinNext FinFirst)))))))))))))
 
-:= q15 () : fin n16 = FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext FinFirst))))))))))))))
+:= q15 () : fin n16 =
+    FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (FinNext (
+        FinNext (FinNext (FinNext FinFirst))))))))))))))
 
 := r0 () : bit_row = Rejected, q0 (), q1 ()
 

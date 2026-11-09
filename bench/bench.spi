@@ -202,7 +202,8 @@
     | [] => acc
 
 :~ ^ rotated (k : i32) (arms : list arm) : list arm =
-    ? k <= 0i32 ?> arms
+    ? k <= 0i32
+    ?> arms
     |:
         ?= arms ?|
         | a :: rest => rotated (k - 1i32) (listm::append rest [ a ])

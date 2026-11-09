@@ -110,18 +110,24 @@
 := is_name_escape (c : u32) : bool = c = 105u32 || c = 99u32 || c = 73u32 || c = 67u32
 
 := word_escape (c : u32) (rest : list u32) : set_step =
-    ? c = 119u32 ?> SetTook (word_characters (), rest)
-    |? c = 87u32 ?> SetTook (complement (word_characters ()), rest)
+    ? c = 119u32
+    ?> SetTook (word_characters (), rest)
+    |? c = 87u32
+    ?> SetTook (complement (word_characters ()), rest)
     |: SetTook (single (escape_literal c), rest)
 
 := space_escape (c : u32) (rest : list u32) : set_step =
-    ? c = 115u32 ?> SetTook (white_space (), rest)
-    |? c = 83u32 ?> SetTook (complement (white_space ()), rest)
+    ? c = 115u32
+    ?> SetTook (white_space (), rest)
+    |? c = 83u32
+    ?> SetTook (complement (white_space ()), rest)
     |: word_escape c rest
 
 := class_escape (c : u32) (rest : list u32) : set_step =
-    ? c = 100u32 ?> SetTook (digits (), rest)
-    |? c = 68u32 ?> SetTook (complement (digits ()), rest)
+    ? c = 100u32
+    ?> SetTook (digits (), rest)
+    |? c = 68u32
+    ?> SetTook (complement (digits ()), rest)
     |: space_escape c rest
 
 := starts_with (c : u32) (codes : list u32) : bool =
@@ -135,8 +141,10 @@
     | [] => []
 
 := escape_at (c : u32) (rest : list u32) : set_step =
-    ? (c = 112u32 || c = 80u32) && starts_with 123u32 rest ?> property (c = 80u32) (drop_one rest)
-    |? is_name_escape c ?> SetFailed NameEscape
+    ? (c = 112u32 || c = 80u32) && starts_with 123u32 rest
+    ?> property (c = 80u32) (drop_one rest)
+    |? is_name_escape c
+    ?> SetFailed NameEscape
     |: class_escape c rest
 
 := escape (codes : list u32) : set_step =
@@ -233,8 +241,10 @@
     |: counted_bound r low (digits_from codes 0u32 !-)
 
 := counted_upper (r : re) (low : u32) (codes : list u32) : step =
-    ? starts_with 125u32 codes ?> no_stack (repeat r low (Bounded low)) (drop_one codes)
-    |? starts_with 44u32 codes ?> counted_max r low (drop_one codes)
+    ? starts_with 125u32 codes
+    ?> no_stack (repeat r low (Bounded low)) (drop_one codes)
+    |? starts_with 44u32 codes
+    ?> counted_max r low (drop_one codes)
     |: Failed BadCount
 
 := counted (r : re) (codes : list u32) : step =
@@ -248,8 +258,10 @@
 := quantify (r : re) (rest : list u32) : step =
     ?= rest ?|
     | c :: more =>
-        ? c = 63u32 ?> no_stack (optional r) more
-        |? c = 42u32 ?> no_stack (star r) more
+        ? c = 63u32
+        ?> no_stack (optional r) more
+        |? c = 42u32
+        ?> no_stack (star r) more
         |: plus_or_counted r c more rest
     | [] => Took (r, [])
 
@@ -269,8 +281,10 @@
     | failed => failed
 
 := atom_literal (c : u32) (rest : list u32) : step =
-    ? c = 46u32 ?> Took (set (complement (line_breaks ())), rest)
-    |? c = 42u32 || c = 43u32 || c = 63u32 || c = 123u32 ?> Failed NothingToRepeat
+    ? c = 46u32
+    ?> Took (set (complement (line_breaks ())), rest)
+    |? c = 42u32 || c = 43u32 || c = 63u32 || c = 123u32
+    ?> Failed NothingToRepeat
     |: Took (code c, rest)
 
 :~ ^ alternation (codes : list u32) : step = after_branch (branch codes Epsilon)
@@ -294,9 +308,12 @@
     | [] => Failed NothingToRepeat
 
 :& :~ atom_at (c : u32) (rest : list u32) : step =
-    ? c = 40u32 ?> atom_group rest
-    |? c = 91u32 ?> set_to_step (class_open rest)
-    |? c = 92u32 ?> set_to_step (escape rest)
+    ? c = 40u32
+    ?> atom_group rest
+    |? c = 91u32
+    ?> set_to_step (class_open rest)
+    |? c = 92u32
+    ?> set_to_step (escape rest)
     |: atom_literal c rest
 
 :& :~ atom_group (rest : list u32) : step = ? starts_with 63u32 rest ?> Failed Lookaround |: group (alternation rest)
@@ -360,7 +377,8 @@
 ///> rust
 ///> gleam
 :# an_unfinished_pattern_is_refused_with_what_it_lacks =
-    (refusal_of "*a", refusal_of "(ab", refusal_of "[ab") |> _assert_eq (Some NothingToRepeat, Some UnclosedGroup, Some UnclosedClass)
+    (refusal_of "*a", refusal_of "(ab", refusal_of "[ab")
+    |> _assert_eq (Some NothingToRepeat, Some UnclosedGroup, Some UnclosedClass)
 
 ///> rust
 ///> gleam

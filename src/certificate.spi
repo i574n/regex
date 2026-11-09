@@ -38,7 +38,9 @@
     := l, r = pair_step s p c
     ? both_dead l r || seen_pair l r seen ?> seen, todo |: (l, r) :: seen, enqueued l r p c todo
 
-:~ ^ successors (s : search) (p : probe) (cs : list u32) (seen : seen_pairs) (todo : list probe) : list probe * seen_pairs =
+:== probe_work = list probe * seen_pairs
+
+:~ ^ successors (s : search) (p : probe) (cs : list u32) (seen : seen_pairs) (todo : list probe) : probe_work =
     ?= cs ?|
     | c :: rest =>
         := seen, todo = visit_pair s p c seen todo
@@ -73,8 +75,10 @@
 :~ compare_states (m : dfa) (i : i32) (j : i32) : equivalence = compare_from m (To (state i)) m (To (state j))
 
 :~ ^ witnesses_for (m : dfa) (i : i32) (j : i32) (n : i32) (acc : list witness) : minimality =
-    ? i >= n ?> Minimal (listm::rev acc)
-    |? j >= n ?> witnesses_for m (i + 1i32) (i + 2i32) n acc
+    ? i >= n
+    ?> Minimal (listm::rev acc)
+    |? j >= n
+    ?> witnesses_for m (i + 1i32) (i + 2i32) n acc
     |: witness_pair m i j n acc
 
 :& :~ witness_pair (m : dfa) (i : i32) (j : i32) (n : i32) (acc : list witness) : minimality =
@@ -176,8 +180,10 @@
     | None => b
 
 :~ state_violation (x : sound_ctx) (e : re) (i : i32) (j : i32) (k : i32) : option dfa_violation =
-    ? k < 0i32 || k >= x::n ?> Some (OpenTarget (i, j))
-    |? same_re e (re_nth k x::d::regexes) |> not ?> Some (WrongTransition (i, j))
+    ? k < 0i32 || k >= x::n
+    ?> Some (OpenTarget (i, j))
+    |? same_re e (re_nth k x::d::regexes) |> not
+    ?> Some (WrongTransition (i, j))
     |: None
 
 :~ column_violation (x : sound_ctx) (e : re) (i : i32) (j : i32) (t : target) : option dfa_violation =
@@ -189,14 +195,19 @@
 :~ column_at (x : sound_ctx) (r : re) (c : u32) (i : i32) (j : i32) (next : list target) : option dfa_violation =
     column_violation x (derive c r) i j (target_at j next)
 
-:~ ^ columns_sound (x : sound_ctx) (r : re) (i : i32) (lows : list u32) (next : list target) (j : i32) : option dfa_violation =
+:~ ^ columns_sound
+    (x : sound_ctx) (r : re) (i : i32) (lows : list u32) (next : list target) (j : i32)
+    : option dfa_violation
+    =
     ?= lows ?|
     | c :: rest => first_of (column_at x r c i j next) (columns_sound x r i rest next (j + 1i32))
     | [] => None
 
 :~ row_flags (x : sound_ctx) (w : row) (i : i32) (r : re) : option dfa_violation =
-    ? w::accepting <> verdict_of (nullable r) ?> Some (AcceptingMismatch i)
-    |? count_next w::next 0i32 <> x::width ?> Some (NotTotal i)
+    ? w::accepting <> verdict_of (nullable r)
+    ?> Some (AcceptingMismatch i)
+    |? count_next w::next 0i32 <> x::width
+    ?> Some (NotTotal i)
     |: None
 
 :~ row_violation (x : sound_ctx) (w : row) (i : i32) : option dfa_violation =
@@ -241,8 +252,15 @@
 
 :~ ^ partition_from (classes : list code_range) (expected : u32) (i : i32) : partition_check =
     ?= classes ?|
-    | c :: rest => ? c::low <> expected ?> Gap expected |? c::high < c::low ?> InvertedClass i |: partition_next c rest i
+    | c :: rest => partition_class c rest expected i
     | [] => ShortOfTheTop expected
+
+:& :~ partition_class (c : code_range) (rest : list code_range) (expected : u32) (i : i32) : partition_check =
+    ? c::low <> expected
+    ?> Gap expected
+    |? c::high < c::low
+    ?> InvertedClass i
+    |: partition_next c rest i
 
 :& :~ partition_next (c : code_range) (rest : list code_range) (i : i32) : partition_check =
     ? c::high = last_code_point () ?> top_check rest i |: partition_from rest (c::high + 1u32) (i + 1i32)
@@ -266,7 +284,11 @@
     | [] => NormalSet (i + 1i32)
 
 :& :~ set_pair (a : code_range) (b : code_range) (rest : list code_range) (i : i32) : set_check =
-    ? b::low <= a::high ?> Unsorted (i + 1i32) |? b::low = a::high + 1u32 ?> Touching (i + 1i32) |: set_from rest (i + 1i32)
+    ? b::low <= a::high
+    ?> Unsorted (i + 1i32)
+    |? b::low = a::high + 1u32
+    ?> Touching (i + 1i32)
+    |: set_from rest (i + 1i32)
 
 := check_normal (s : char_set normal) : set_check = set_from (ranges_of s) 0i32
 
@@ -293,12 +315,15 @@
     | Distinguished _ => !-
 
 :~ ^ covered_by (d : dfa) (i : i32) (m : dfa) (j : i32) (n : i32) : bool =
-    ? j >= n ?> is_equivalent (compare_from d (To (state i)) m Dead)
+    ? j >= n
+    ?> is_equivalent (compare_from d (To (state i)) m Dead)
     |: is_equivalent (compare_from d (To (state i)) m (To (state j))) || covered_by d i m (j + 1i32) n
 
 :~ ^ coverage_from (d : dfa) (m : dfa) (i : i32) (n : i32) : option quotient_check =
-    ? i >= n ?> None
-    |? covered_by d i m 0i32 (state_count m) ?> coverage_from d m (i + 1i32) n
+    ? i >= n
+    ?> None
+    |? covered_by d i m 0i32 (state_count m)
+    ?> coverage_from d m (i + 1i32) n
     |: Some (Uncovered i)
 
 :~ faithful (e : equivalence) : quotient_check =
@@ -389,7 +414,10 @@
 ///> gleam
 :# a_target_outside_the_table_is_named =
     := d = eager_of (ends_in_zero ())
-    check_dfa { d ?| rows = listm::map (\ (w : row) => escape_row w) d::rows } |> _assert_eq (Violates (OpenTarget (0i32, 0i32)))
+    check_dfa { d ?|
+        rows = listm::map (\ (w : row) => escape_row w) d::rows
+    }
+    |> _assert_eq (Violates (OpenTarget (0i32, 0i32)))
 
 ///> rust
 ///> gleam
