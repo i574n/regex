@@ -1,15 +1,18 @@
 packageDir = '../deps/spiral/lib'
 packages = ['|core-', 'spiral-']
 modules = '''
-dfa
 lazy
-minimal
-certificate
-table
 partial
 agreement
+workloads
 semantics
 laws
-xsd
+witness
 typed
+core_emit
+table_emit
+ssv_graph
+ssv_layout
+ssv_parity
+ssv_determinism
 '''

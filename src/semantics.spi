@@ -6,9 +6,9 @@
 :< regex_syntax
 :< regex_derivative
 :< regex_language
-:< dfa
-:< minimal
-:< certificate
+:< regex_dfa
+:< regex_minimal
+:< regex_certificate
 :< partial
 :< agreement
 
@@ -17,9 +17,9 @@
 :~ ^ oracle_from (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (checked : i32) : agreement =
     ? turn >= n ?> Agree checked |: oracle_step r eager m salt turn n checked
 
-:& :~ oracle_step (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (checked : i32) : agreement =
+:& :~ oracle_step (r : re) (eager : built) (m : dfa) (salt : u32) (turn : u32) (n : u32) (k : i32) : agreement =
     := w, a = word_answers r eager m salt turn
-    ? oracle_agrees r w a ?> oracle_from r eager m salt (turn + 1u32) n (checked + 1i32) |: Disagree (w, a)
+    ? oracle_agrees r w a ?> oracle_from r eager m salt (turn + 1u32) n (k + 1i32) |: Disagree (w, a)
 
 :~ ^ oracle_all (salt : u32) (n : u32) (patterns : list re) (total : i32) : agreement =
     ?= patterns ?|
@@ -155,6 +155,7 @@
 
 :~ ^ zeros (n : i32) : list u32 = ? n <= 0i32 ?> [] |: 48u32 :: zeros (n - 1i32)
 
+///> c
 ///> rust
 ///> gleam
 :# the_backtracking_baseline_agrees_with_the_language_oracle_on_the_and_not_free_corpus =
@@ -163,6 +164,7 @@
 
 :~ redos () : re = seq (star (alt (zero ()) (seq (zero ()) (zero ())))) (one ())
 
+///> c
 ///> rust
 ///> gleam
 :# the_redos_shape_still_gets_the_right_answer_by_backtracking =
@@ -170,6 +172,7 @@
     (reached_verdict (backtracking_answer (redos ()) w), language_answer (redos ()) w)
     |> _assert_eq (Some Rejected, Rejected)
 
+///> c
 ///> rust
 ///> gleam
 :# the_redos_shape_accepts_once_the_final_one_arrives =
@@ -180,6 +183,7 @@
 :# an_oracle_is_never_compared_with_itself fails "Unification failure" =
     oracles_agree (LanguageVerdict Accepted) (LanguageVerdict Accepted)
 
+///> c
 ///> rust
 ///> gleam
 :# the_language_oracle_agrees_with_every_engine_on_the_seeded_corpus =

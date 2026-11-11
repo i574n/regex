@@ -1,0 +1,100 @@
+///- --package . --timeout 900000
+:# workloads static =
+    :< testing
+
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< agreement
+:< sm'_operators
+
+:| workload =
+    | EndsInZero
+    | ZeroRuns
+    | FourthFromEnd
+    | CountedLetters
+    | FourthFromEndLong
+    | EighthFromEnd
+
+:= later_name (w : workload) : string =
+    ?= w ?|
+    | CountedLetters => "[a-z]{1,64}"
+    | FourthFromEndLong => "(0|1)*1(0|1){3} on 4 texts of 4000 bits"
+    | _ => "(0|1)*1(0|1){7}"
+
+:= workload_name (w : workload) : string =
+    ?= w ?|
+    | EndsInZero => "(0|1)*0"
+    | ZeroRuns => "(0|00)*1"
+    | FourthFromEnd => "(0|1)*1(0|1){3}"
+    | _ => later_name w
+
+:= eighth_from_end () : re = seq (star (bit ())) (seq (one ()) (repeat (bit ()) 7u32 (Bounded 7u32)))
+
+:= workload_regex (w : workload) : re =
+    ?= w ?|
+    | EndsInZero => ends_in_zero ()
+    | ZeroRuns => zero_runs ()
+    | CountedLetters => repeat (Set (lower ())) 1u32 (Bounded 64u32)
+    | EighthFromEnd => eighth_from_end ()
+    | _ => fourth_from_end ()
+
+:= later_pattern (w : workload) : string =
+    ?= w ?|
+    | CountedLetters => "^[a-z]{1,64}$"
+    | EighthFromEnd => "^(?:0|1)*1(?:0|1){7}$"
+    | _ => "^(?:0|1)*1(?:0|1){3}$"
+
+:= crate_pattern (w : workload) : string =
+    ?= w ?|
+    | EndsInZero => "^(?:0|1)*0$"
+    | ZeroRuns => "^(?:0|00)*1$"
+    | _ => later_pattern w
+
+:= expected_minimal (w : workload) : size =
+    ?= w ?|
+    | EndsInZero => States 2i32
+    | ZeroRuns => States 2i32
+    | FourthFromEnd => States 16i32
+    | CountedLetters => States 65i32
+    | FourthFromEndLong => States 16i32
+    | EighthFromEnd => States 256i32
+
+:~ ^ words_from (salt : u32) (turn : u32) (n : u32) (lows : list u32) (acc : list (list u32)) : list (list u32) =
+    ? turn >= n ?> acc |: words_from salt (turn + 1u32) n lows (random_word salt turn lows :: acc)
+
+:~ ^ text_of (codes : list u32) : string =
+    ?= codes ?|
+    | c :: rest => xml::code_point_string c ++# text_of rest
+    | [] => ""
+
+:~ ^ texts_of (words : list (list u32)) : list string =
+    ?= words ?|
+    | w :: rest => text_of w :: texts_of rest
+    | [] => []
+
+:~ ^ long_texts (salt : u32) (turn : u32) (acc : list (list u32)) : list (list u32) =
+    ? turn >= 4u32 ?> acc |: long_texts salt (turn + 1u32) (letters salt turn [ 48u32; 49u32 ] 0u32 4000u32 [] :: acc)
+
+:= workload_words (salt : u32) (n : u32) (w : workload) (r : re) : list (list u32) =
+    ?= w ?|
+    | FourthFromEndLong => long_texts salt 0u32 []
+    | _ => words_from salt 0u32 n (lows_of (classes_of r)) []
+
+:= workload_of_index (i : i32) : workload =
+    ? i = 0i32 ?> EndsInZero |? i = 1i32 ?> ZeroRuns |? i = 2i32 ?> FourthFromEnd |? i = 3i32 ?> CountedLetters |? i = 4i32 ?> FourthFromEndLong |: EighthFromEnd
+
+:= index_of_workload (w : workload) : i32 =
+    ?= w ?|
+    | EndsInZero => 0i32
+    | ZeroRuns => 1i32
+    | FourthFromEnd => 2i32
+    | CountedLetters => 3i32
+    | FourthFromEndLong => 4i32
+    | EighthFromEnd => 5i32
+
+///> rust
+:# a_workload_index_round_trips =
+    := ws = [ EndsInZero; ZeroRuns; FourthFromEnd; CountedLetters; FourthFromEndLong; EighthFromEnd ]
+    listm::map (\ w => workload_of_index (index_of_workload w)) ws |> _assert_eq ws

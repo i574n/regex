@@ -1,0 +1,99 @@
+///- --package . --timeout 900000
+:# core_emit static =
+    :< testing
+
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< regex_minimal
+:< regex_certificate
+:< sm'_operators
+
+:~ ^ joined (lines : list string) : string =
+    ?= lines ?|
+    | [] => ""
+    | [ last ] => last
+    | line :: rest => line ++# "\n\n" ++# joined rest
+
+:~ ^ fin_text (i : i32) : string = ? i = 0i32 ?> "FinFirst" |: "FinNext (" ++# fin_text (i - 1i32) ++# ")"
+
+:~ named (p : string) (kind : string) (i : i32) : string = p ++# kind ++# sm'::show i
+
+:~ nat_line (p : string) (i : i32) : string =
+    := previous = ? i = 1i32 ?> "nat_zero" |: named p "n" (i - 1i32)
+    ":== " ++# named p "n" i ++# " = nat_succ " ++# previous
+
+:~ state_line (p : string) (n : i32) (i : i32) : string =
+    ":= " ++# named p "q" i ++# " () : fin " ++# named p "n" n ++# " = " ++# fin_text i
+
+:~ target_index (t : target) : option i32 =
+    ?= t ?|
+    | To s => Some (state_index s)
+    | Dead => None
+
+:~ verdict_text (v : verdict) : string = ? v = Accepted ?> "Accepted" |: "Rejected"
+
+:~ row_cells (p : string) (d : dfa) (i : i32) (a : i32) (b : i32) : string =
+    verdict_text (verdict_at d (To (state i))) ++# ", " ++# named p "q" a ++# " (), " ++# named p "q" b ++# " ()"
+
+:~ row_text (p : string) (d : dfa) (i : i32) (a : i32) (b : i32) : string =
+    ":= " ++# named p "r" i ++# " () : " ++# p ++# "bit_row = " ++# row_cells p d i a b
+
+:~ row_line (p : string) (d : dfa) (i : i32) : option string =
+    := on_zero = target_index (step d (To (state i)) 48u32)
+    ?= on_zero, target_index (step d (To (state i)) 49u32) ?|
+    | Some a, Some b => Some (row_text p d i a b)
+    | _ => None
+
+:~ vector_head (p : string) (k : i32) : string =
+    ":= " ++# named p "v" k ++# " () : vector " ++# named p "n" k ++# " " ++# p ++# "bit_row"
+
+:~ vector_line (p : string) (n : i32) (k : i32) : string =
+    := tail = ? k = 1i32 ?> "VectorEnd" |: named p "v" (k - 1i32) ++# " ()"
+    vector_head p k ++# " = VectorCons (" ++# named p "r" (n - k) ++# " (), " ++# tail ++# ")"
+
+:~ ^ counted (f : i32 -> string) (i : i32) (n : i32) : list string = ? i > n ?> [] |: f i :: counted f (i + 1i32) n
+
+:~ ^ rows_of (p : string) (d : dfa) (i : i32) (n : i32) : option (list string) =
+    ? i >= n ?> Some [] |: rows_next p d i n (row_line p d i)
+
+:& :~ rows_next (p : string) (d : dfa) (i : i32) (n : i32) (line : option string) : option (list string) =
+    ?= line, rows_of p d (i + 1i32) n ?|
+    | Some l, Some rest => Some (l :: rest)
+    | _ => None
+
+:~ alias_line (p : string) (n : i32) : string =
+    ":== " ++# p ++# "bit_row = verdict * fin " ++# named p "n" n ++# " * fin " ++# named p "n" n
+
+:~ start_line (p : string) (d : dfa) : string =
+    := start = ?= target_index d::start ?| Some k => k | None => 0i32
+    ":= " ++# p ++# "start () : fin " ++# named p "n" (state_count d) ++# " = " ++# named p "q" start ++# " ()"
+
+:~ types_part (p : string) (n : i32) : list string = listm::append (counted (nat_line p) 1i32 n) [ alias_line p n ]
+
+:~ values_part (p : string) (d : dfa) (n : i32) (rows : list string) : list string =
+    := states = counted (state_line p n) 0i32 (n - 1i32)
+    listm::append states (listm::append rows (counted (vector_line p n) 1i32 n))
+
+:~ emitted_core (p : string) (d : dfa) : option string =
+    := n = state_count d
+    ?= rows_of p d 0i32 n ?|
+    | Some rows => Some (joined (listm::append (types_part p n) (listm::append (values_part p d n rows) [ start_line p d ])))
+    | None => None
+
+:= expected_types () : string =
+    ":== gn1 = nat_succ nat_zero\n\n:== gn2 = nat_succ gn1\n\n:== gbit_row = verdict * fin gn2 * fin gn2\n\n"
+
+:= expected_states () : string =
+    ":= gq0 () : fin gn2 = FinFirst\n\n:= gq1 () : fin gn2 = FinNext (FinFirst)\n\n"
+    ++# ":= gr0 () : gbit_row = Rejected, gq1 (), gq0 ()\n\n:= gr1 () : gbit_row = Accepted, gq1 (), gq0 ()\n\n"
+
+:= expected_vectors () : string =
+    ":= gv1 () : vector gn1 gbit_row = VectorCons (gr1 (), VectorEnd)\n\n"
+    ++# ":= gv2 () : vector gn2 gbit_row = VectorCons (gr0 (), gv1 ())\n\n:= gstart () : fin gn2 = gq0 ()"
+
+:= expected_ends_in_zero () : string = expected_types () ++# expected_states () ++# expected_vectors ()
+
+///> rust
+:# the_two_state_core_of_ends_in_zero_is_emitted_as_typed_spiral =
+    emitted_core "g" (minimal_of (ends_in_zero ())) |> _assert_eq (Some (expected_ends_in_zero ()))

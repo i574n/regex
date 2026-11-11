@@ -1,0 +1,37 @@
+///- --package . --timeout 900000
+:# ssv_parity static =
+    :< testing
+
+:== pt = { x : f32; y : f32 }
+
+:== quad = { a : pt; b : pt; c : pt; d : pt }
+
+:= mid (p : pt) (q : pt) : pt = { x = (p::x + q::x) * 0.5f32; y = (p::y + q::y) * 0.5f32 }
+
+:= toward (p : pt) (c : pt) (u : f32) : pt = { x = p::x + (c::x - p::x) * u; y = p::y + (c::y - p::y) * u }
+
+:= merge_pairs (q : quad) (u : f32) : quad =
+    := first = mid q::a q::b
+    := second = mid q::c q::d
+    { a = toward q::a first u; b = toward q::b first u; c = toward q::c second u; d = toward q::d second u }
+
+:= synthetic () : quad = { a = { x = 0f32; y = 0f32 }; b = { x = 2f32; y = 0f32 }; c = { x = 0f32; y = 4f32 }; d = { x = 0f32; y = 6f32 } }
+
+:= near (got : f32) (want : f32) : bool = ? got > want ?> got - want <= 0.00001f32 |: want - got <= 0.00001f32
+
+:= at (p : pt) (x : f32) (y : f32) : bool = near p::x x && near p::y y
+
+:= halfway_holds (q : quad) : bool = at q::a 0.5f32 0f32 && at q::b 1.5f32 0f32 && at q::c 0f32 4.5f32 && at q::d 0f32 5.5f32
+
+///> rust
+///> wgsl
+:# a_synthetic_merge_step_agrees_on_cpu_and_gpu =
+    := ~u = 0.5f32
+    ? halfway_holds (merge_pairs (synthetic ()) u) ?> 0i32 |: 1i32
+
+///> rust
+///> wgsl
+:# a_full_merge_puts_each_pair_on_its_midpoint =
+    := ~u = 1f32
+    := q = merge_pairs (synthetic ()) u
+    ? at q::a 1f32 0f32 && at q::b 1f32 0f32 && at q::c 0f32 5f32 && at q::d 0f32 5f32 ?> 0i32 |: 1i32

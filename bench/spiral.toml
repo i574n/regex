@@ -1,5 +1,6 @@
 packageDir = '../deps/spiral/lib'
-packages = ['|core-', 'spiral-', '../src-']
+packages = ['|core-', 'spiral-', '../src-', '../units/rx_external-', '../units/rx_crate-']
+link = ['../units/rx_external-', '../units/rx_crate-']
 modules = '''
 host
 bench

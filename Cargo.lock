@@ -44,7 +44,8 @@ dependencies = [
 name = "regex-bench"
 version = "0.0.1"
 dependencies = [
- "regex",
+ "rx_crate",
+ "rx_external",
 ]
 
 [[package]]
@@ -52,3 +53,14 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "rx_crate"
+version = "0.0.1"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "rx_external"
+version = "0.0.1"

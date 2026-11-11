@@ -5,16 +5,17 @@ engine answers the same question, and the answers are checked against each other
 
 | engine | module | what it computes |
 | --- | --- | --- |
-| Brzozowski derivatives | `src/derivative.spi` | one derivative per code point, similarity-normalized (ACI alternation, right-nested sequence) |
+| Brzozowski derivatives | spiral lib `regex_derivative.spi` | one derivative per code point, similarity-normalized (ACI alternation, right-nested sequence) |
 | Antimirov partial derivatives | `src/partial.spi` | sets of terms, with the support bound \|PD(r)\| <= alphabetic width + 1 |
-| eager DFA | `src/dfa.spi` | states = derivatives over the pattern's code-point classes, a state cap that refuses |
-| minimal DFA | `src/minimal.spi` | the Myhill-Nerode quotient by partition refinement |
-| certificates | `src/certificate.spi` | a distinguishing word per pair of minimal states, replayed on the derivative matcher; equivalence by product exploration |
+| eager DFA | spiral lib `regex_dfa.spi` | states = derivatives over the pattern's code-point classes, a cap of min(10000 states, 2 MB of table) that refuses with a typed error |
+| minimal DFA | spiral lib `regex_minimal.spi` | the Myhill-Nerode quotient by partition refinement |
+| certificates | spiral lib `regex_certificate.spi` | a distinguishing word per pair of minimal states, replayed on the derivative matcher; equivalence by product exploration |
 | agreement | `src/agreement.spi` | all engines on a seeded corpus (lib `keyed_rng`) and on each shortest accepted word with its one-symbol mutations |
-| XSD patterns | `src/xsd.spi` | the XSD dialect (implicit anchoring, literal `^`/`$`, class subtraction, blocks) with typed refusals |
+| XSD patterns | spiral lib `regex_xsd.spi` | the XSD dialect (implicit anchoring, literal `^`/`$`, class subtraction, blocks) with typed refusals |
 
-The syntax (`src/syntax.spi`) has intersection and complement, and counted repetition is one node (`[a-z]{1,1000}`
-builds 1001 states, it is never unrolled). Nullability comes with typed evidence (`src/nullable.spi`).
+The syntax (spiral lib `regex_syntax.spi`) has intersection and complement, and counted repetition is one node
+(`[a-z]{1,1000}` builds 1001 states, it is never unrolled). Nullability comes with typed evidence (spiral lib
+`regex_nullable.spi`).
 
 ```powershell
 pwsh scripts/init.ps1    # links deps/spiral to a sibling spiral checkout, cloning it when missing
@@ -30,8 +31,8 @@ pwsh build.ps1           # the Spiral test cells, then bench/bench.spi -> Rust -
   yet, and no claim of speed.
 - `bench/bench.rs` is about 4,200 generated lines, over the 1,000-line rule: it stays uncommitted until the bench is
   split into crates.
-- No captures, lookaround or Unicode categories. The XSD front end (`src/xsd.spi`) knows six Unicode blocks and
-  ASCII `\d\s\w`, and has not been checked against a real schema corpus yet.
+- No captures, lookaround or Unicode categories. The XSD front end (spiral lib `regex_xsd.spi`) knows six Unicode blocks
+  and ASCII `\d\s\w`, and has not been checked against a real schema corpus yet.
 - One maintainer, with AI agents writing most of the code.
 
 ## License

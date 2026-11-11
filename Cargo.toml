@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["bench"]
+members = ["bench", "units/rx_external", "units/rx_crate"]
+
+[workspace.dependencies]
+regex = "1.10"
+rx_external = { path = "units/rx_external" }
+rx_crate = { path = "units/rx_crate" }
 
 [profile.release]
 codegen-units = 16

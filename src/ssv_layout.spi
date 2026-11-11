@@ -1,0 +1,164 @@
+///- --package .
+:# ssv_layout static =
+    :< testing
+
+:< regex_derivative
+:< regex_minimal
+:< ssv_graph
+
+:== point = { x : f64; y : f64 }
+
+:== link = i32 * i32
+
+:~ origin () : point = { x = 0.0; y = 0.0 }
+
+:~ add (a : point) (b : point) : point = { x = a::x + b::x; y = a::y + b::y }
+
+:~ ^ nth_point (ps : list point) (i : i32) : point =
+    ?= ps ?|
+    | p :: rest => ? i = 0i32 ?> p |: nth_point rest (i - 1i32)
+    | [] => origin ()
+
+:~ link_of (acc : list link) (e : edge_row) : list link =
+    ?= e::target ?|
+    | ToState t => (e::source, t) :: acc
+    | ToDead => acc
+
+:~ links (g : graph) : list link = listm::fold link_of [] g::edges
+
+:~ parent_of (ls : list link) (i : i32) : i32 =
+    listm::fold (\ p (a, b) => ? b = i && a < i && (p < 0i32 || a < p) ?> a |: p) (-1i32) ls
+
+:~ offset (i : i32) : point =
+    := ox = !!!!Conv(`f64, !!!!Mod(i * 31i32, 17i32) - 8i32)
+    := oy = !!!!Conv(`f64, !!!!Mod(i * 37i32, 13i32) - 6i32)
+    { x = ox / 16.0 + 0.25; y = oy / 12.0 }
+
+:~ push (p : point) (q : point) : point =
+    := dx = p::x - q::x
+    := dy = p::y - q::y
+    := d2 = dx * dx + dy * dy + 0.000001
+    { x = dx / d2; y = dy / d2 }
+
+:~ pull (p : point) (q : point) : point =
+    := dx = p::x - q::x
+    := dy = p::y - q::y
+    := d = sqrt (dx * dx + dy * dy)
+    { x = 0.0 - dx * d; y = 0.0 - dy * d }
+
+:~ repulsion (ps : list point) (i : i32) (p : point) : point =
+    := step (acc, j) q = (? j = i ?> acc |: add acc (push p q)), j + 1i32
+    listm::fold step (origin (), 0i32) ps |> fst
+
+:~ toward (ps : list point) (n : i32) (i : i32) (p : point) (acc : point) ((a, b) : link) : point =
+    ? a = i && b < n && b <> i ?> add acc (pull p (nth_point ps b))
+    |? b = i && a < n && a <> i ?> add acc (pull p (nth_point ps a))
+    |: acc
+
+:~ attraction (ps : list point) (ls : list link) (n : i32) (i : i32) (p : point) : point =
+    listm::fold (toward ps n i p) (origin ()) ls
+
+:~ moved (t : f64) (p : point) (f : point) : point =
+    := m = sqrt (f::x * f::x + f::y * f::y) + 0.000001
+    := s = ? m > t ?> t / m |: 1.0
+    { x = p::x + f::x * s; y = p::y + f::y * s }
+
+:~ heat (n : i32) (i : i32) (t : f64) : f64 = ? i = n - 1i32 ?> t |: t * 0.2
+
+:~ step (ls : list link) (n : i32) (t : f64) (ps : list point) : list point =
+    listm::mapi (\ i p => moved (heat n i t) p (add (repulsion ps i p) (attraction ps ls n i p))) ps
+
+:~ temperature (k : i32) : f64 = 0.5 * (1.0 - !!!!Conv(`f64, k) / 30.0) + 0.02
+
+:~ ^ settle (ls : list link) (n : i32) (k : i32) (ps : list point) : list point =
+    ? k >= 30i32 ?> ps |: settle ls n (k + 1i32) (step ls n (temperature k) ps)
+
+:~ entered (ls : list link) (ps : list point) (i : i32) : list point =
+    := p = parent_of ls i
+    := base = ? p < 0i32 ?> origin () |: nth_point ps p
+    listm::append ps [ add base (offset i) ]
+
+:~ ^ frames_to (ls : list link) (f : i32) (n : i32) (ps : list point) : list point =
+    ? n > f ?> ps |: frames_to ls f (n + 1i32) (settle ls (n + 1i32) 0i32 (entered ls ps n))
+
+:~ layout (g : graph) (f : i32) : list point =
+    frames_to (links g) (min f (listm::length g::states - 1i32)) 0i32 []
+
+:~ quantized (v : f64) : i64 = !!!!Conv(`i64, v * 1000000.0)
+
+:~ digest (ps : list point) : i64 =
+    listm::fold (\ h (p : point) => !!!!Mod(h * 31i64 + quantized p::x + 7i64 * quantized p::y, 1000000007i64)) 17i64 ps
+
+:~ distance (p : point) (q : point) : f64 =
+    := dx = p::x - q::x
+    := dy = p::y - q::y
+    sqrt (dx * dx + dy * dy)
+
+:~ drift (a : list point) (b : list point) : f64 =
+    listm::fold (\ (m, i) p => max m (distance p (nth_point b i)), i + 1i32) (0.0, 0i32) a |> fst
+
+:~ lerp (a : point) (b : point) (u : f64) : point = { x = a::x + (b::x - a::x) * u; y = a::y + (b::y - a::y) * u }
+
+:~ centroid (ps : list point) (ms : list i32) (b : i32) : point =
+    := s, n = listm::fold (\ (s, n) ((p : point), m) => ? m = b ?> add s p, n + 1.0 |: s, n) (origin (), 0.0) (listm::zip ps ms)
+    ? n > 0.0 ?> { x = s::x / n; y = s::y / n } |: origin ()
+
+:~ merged (ps : list point) (ms : list i32) (u : f64) : list point =
+    listm::map (\ ((p : point), m) => ? m < 0i32 ?> p |: lerp p (centroid ps ms m) u) (listm::zip ps ms)
+
+:~ ^ through (rs : list merge_round) (k : i32) (u : f64) (ps : list point) : list point =
+    ?= rs ?|
+    | [] => ps
+    | r :: rest => ? r::round < k ?> through rest k u (merged ps r::members 1.0) |? r::round = k ?> merged ps r::members u |: ps
+
+:~ merge_frame (g : graph) (k : i32) (t : i32) (steps : i32) : list point =
+    := u = !!!!Conv(`f64, t) / !!!!Conv(`f64, steps)
+    through g::rounds k u (layout g (listm::length g::states - 1i32))
+
+:~ last_round (g : graph) : i32 = listm::fold (\ _ (m : merge_round) => m::round) 0i32 g::rounds
+
+:~ spread (ps : list point) (ms : list i32) : f64 =
+    listm::fold (\ w ((p : point), m) => ? m < 0i32 ?> w |: max w (distance p (centroid ps ms m))) 0.0 (listm::zip ps ms)
+
+///> rust
+:# a_layout_is_a_pure_function_of_the_graph_and_the_frame =
+    := g = graph_or_empty (fourth_from_end ())
+    := f = listm::length g::states - 1i32
+    digest (layout g f) |> _assert_eq (digest (layout (graph_or_empty (fourth_from_end ())) f))
+
+///> rust
+:# frame_f_shows_the_first_f_plus_one_states =
+    listm::length (layout (graph_or_empty (fourth_from_end ())) 3i32) |> _assert_eq 4i32
+
+///> rust
+:# a_new_state_enters_near_its_parent =
+    := g = graph_or_empty (fourth_from_end ())
+    := ps = layout g 1i32
+    (distance (nth_point ps 1i32) (nth_point ps (parent_of (links g) 1i32)) < 3.0) |> _assert_eq !+
+
+///> rust
+:# older_states_drift_little_when_a_state_is_added =
+    := g = graph_or_empty (fourth_from_end ())
+    (drift (layout g 4i32) (layout g 5i32) < 2.0) |> _assert_eq !+
+
+///> rust
+:# every_frame_of_a_graph_row_has_finite_positions =
+    := g = graph_or_empty (fourth_from_end ())
+    := ps = layout g (listm::length g::states - 1i32)
+    listm::fold (\ ok (p : point) => ok && p::x = p::x && p::y = p::y) !+ ps |> _assert_eq !+
+
+///> rust
+:# after_the_last_round_each_block_sits_at_one_point =
+    := g = graph_or_empty (tri_cyclic_nonminimal ())
+    spread (merge_frame g (last_round g) 4i32 4i32) (final_members g) |> _assert_eq 0.0
+
+///> rust
+:# a_merge_round_at_step_zero_has_not_moved_yet =
+    := g = graph_or_empty (tri_cyclic_nonminimal ())
+    := f = listm::length g::states - 1i32
+    digest (merge_frame g 0i32 0i32 4i32) |> _assert_eq (digest (layout g f))
+
+///> rust
+:# merge_frames_are_deterministic =
+    := g = graph_or_empty (tri_cyclic_nonminimal ())
+    digest (merge_frame g 1i32 2i32 4i32) |> _assert_eq (digest (merge_frame (graph_or_empty (tri_cyclic_nonminimal ())) 1i32 2i32 4i32))

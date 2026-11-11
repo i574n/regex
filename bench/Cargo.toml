@@ -14,4 +14,5 @@ name = "regex-bench"
 path = "bench.rs"
 
 [dependencies]
-regex = "1"
+rx_external = { workspace = true }
+rx_crate = { workspace = true }

@@ -1,61 +1,22 @@
 :< regex_charset
 :< regex_syntax
 :< regex_derivative
-:< dfa
-:< minimal
-:< table
-:< certificate
+:< regex_dfa
+:< regex_minimal
+:< regex_table
+:< regex_certificate
 :< partial
 :< agreement
+:< workloads
+:< rx_external
+:< rx_crate
 :< regex_language
 :< semantics
 :< lazy
+:< table_emit
 :< sm'_operators
 :< host
 
-:| workload =
-    | EndsInZero
-    | ZeroRuns
-    | FourthFromEnd
-    | CountedLetters
-    | FourthFromEndLong
-    | EighthFromEnd
-
-:= workload_name (w : workload) : string =
-    ?= w ?|
-    | EndsInZero => "(0|1)*0"
-    | ZeroRuns => "(0|00)*1"
-    | FourthFromEnd => "(0|1)*1(0|1){3}"
-    | CountedLetters => "[a-z]{1,64}"
-    | FourthFromEndLong => "(0|1)*1(0|1){3} on 4 texts of 4000 bits"
-    | EighthFromEnd => "(0|1)*1(0|1){7}"
-
-:= workload_regex (w : workload) : re =
-    ?= w ?|
-    | EndsInZero => ends_in_zero ()
-    | ZeroRuns => zero_runs ()
-    | FourthFromEnd => fourth_from_end ()
-    | CountedLetters => repeat (Set (lower ())) 1u32 (Bounded 64u32)
-    | FourthFromEndLong => fourth_from_end ()
-    | EighthFromEnd => seq (star (bit ())) (seq (one ()) (repeat (bit ()) 7u32 (Bounded 7u32)))
-
-:= crate_pattern (w : workload) : string =
-    ?= w ?|
-    | EndsInZero => "^(?:0|1)*0$"
-    | ZeroRuns => "^(?:0|00)*1$"
-    | FourthFromEnd => "^(?:0|1)*1(?:0|1){3}$"
-    | CountedLetters => "^[a-z]{1,64}$"
-    | FourthFromEndLong => "^(?:0|1)*1(?:0|1){3}$"
-    | EighthFromEnd => "^(?:0|1)*1(?:0|1){7}$"
-
-:= expected_minimal (w : workload) : size =
-    ?= w ?|
-    | EndsInZero => States 2i32
-    | ZeroRuns => States 2i32
-    | FourthFromEnd => States 16i32
-    | CountedLetters => States 65i32
-    | FourthFromEndLong => States 16i32
-    | EighthFromEnd => States 256i32
 
 :== prepared =
     {
@@ -64,31 +25,13 @@
         quotient : dfa
         words : list (list u32)
         texts : list string
-        crate_regex : compiled_regex
         table : table
         arrays : list (array_base u32)
+        workload : workload
+        salt : u32
+        n : u32
     }
 
-:~ ^ words_from (salt : u32) (turn : u32) (n : u32) (lows : list u32) (acc : list (list u32)) : list (list u32) =
-    ? turn >= n ?> acc |: words_from salt (turn + 1u32) n lows (random_word salt turn lows :: acc)
-
-:~ ^ text_of (codes : list u32) : string =
-    ?= codes ?|
-    | c :: rest => xml::code_point_string c ++# text_of rest
-    | [] => ""
-
-:~ ^ texts_of (words : list (list u32)) : list string =
-    ?= words ?|
-    | w :: rest => text_of w :: texts_of rest
-    | [] => []
-
-:~ ^ long_texts (salt : u32) (turn : u32) (acc : list (list u32)) : list (list u32) =
-    ? turn >= 4u32 ?> acc |: long_texts salt (turn + 1u32) (letters salt turn [ 48u32; 49u32 ] 0u32 4000u32 [] :: acc)
-
-:= workload_words (salt : u32) (n : u32) (w : workload) (r : re) : list (list u32) =
-    ?= w ?|
-    | FourthFromEndLong => long_texts salt 0u32 []
-    | _ => words_from salt 0u32 n (lows_of (classes_of r)) []
 
 :~ ^ arrays_of (words : list (list u32)) : list (array_base u32) =
     ?= words ?|
@@ -106,9 +49,11 @@
         quotient = m
         words = words
         texts = texts_of words
-        crate_regex = compile_regex (crate_pattern w)
         table = table_of c
         arrays = arrays_of words
+        workload = w
+        salt = salt
+        n = n
     }
 
 :| arm =
@@ -123,11 +68,6 @@
     | LazyArm
     | LazyStoreArm
 
-:= backtracking_verdict (r : re) (w : list u32) : verdict =
-    ?= backtracking_answer r w ?|
-    | Reached v => verdict_of_oracle v
-    | OutsideFragment => Rejected
-
 :~ answer (a : arm) (p : prepared) (w : list u32) : verdict =
     ?= a ?|
     | BrzozowskiArm => matches p::regex w
@@ -137,7 +77,7 @@
     | MinimalAgainArm => run_unchecked p::quotient w
     | RegexCrateArm => run_unchecked p::quotient w
     | TableArm => run_unchecked p::quotient w
-    | BacktrackingArm => backtracking_verdict p::regex w
+    | BacktrackingArm => run_unchecked p::quotient w
     | LazyArm =>
         := v, _ = run_lazy p::regex w
         v
@@ -153,11 +93,6 @@
     | [] => n
 
 :== sample = { arm : arm; nanos : u64; count : i32 }
-
-:~ ^ crate_accepted (p : prepared) (texts : list string) (n : i32) : i32 =
-    ?= texts ?|
-    | t :: rest => crate_accepted p rest (? regex_is_match p::crate_regex t ?> n + 1i32 |: n)
-    | [] => n
 
 :~ ^ table_accepted (p : prepared) (arrays : list (array_base u32)) (n : i32) : i32 =
     ?= arrays ?|
@@ -178,7 +113,6 @@
 
 := one_pass (a : arm) (p : prepared) : i32 =
     ?= a ?|
-    | RegexCrateArm => crate_accepted p p::texts 0i32
     | LazyArm =>
         := e, start, c = lazy_of p::regex
         lazy_accepted e start p::words c 0i32
@@ -191,7 +125,15 @@
 :~ ^ passes (a : arm) (p : prepared) (left : i32) (count : i32) : i32 =
     ? left <= 0i32 ?> count |: passes a p (left - 1i32) (one_pass a p)
 
+:~ external_sample (a : arm) (p : prepared) : sample =
+    := nanos, count =
+        ? a = RegexCrateArm
+        ?> crate_nanos (crate_pattern p::workload, p::texts)
+        |: external_nanos (index_of_workload p::workload, p::words)
+    { arm = a; nanos = nanos; count = count }
+
 :~ timed (a : arm) (p : prepared) : sample =
+    ? a = RegexCrateArm || a = BacktrackingArm ?> external_sample a p |:
     := before = date_time.monotonic_nanoseconds ()
     := count = passes a p 25i32 0i32
     { arm = a; nanos = date_time.monotonic_nanoseconds () - before; count = count }
@@ -241,38 +183,11 @@
     | round :: rest => ratio_in a round :: ratios a rest
     | [] => []
 
-:~ ^ insert_f64 (x : f64) (sorted : list f64) : list f64 =
-    ?= sorted ?|
-    | y :: rest => ? x <= y ?> x :: sorted |: y :: insert_f64 x rest
-    | [] => [ x ]
-
-:~ ^ sorted_f64 (xs : list f64) (acc : list f64) : list f64 =
-    ?= xs ?|
-    | x :: rest => sorted_f64 rest (insert_f64 x acc)
-    | [] => acc
-
-:~ ^ f64_at (i : i32) (xs : list f64) : f64 =
-    ?= xs ?|
-    | x :: rest => ? i <= 0i32 ?> x |: f64_at (i - 1i32) rest
-    | [] => 0.0
-
-:~ ^ length_f64 (xs : list f64) (n : i32) : i32 =
-    ?= xs ?|
-    | _ :: rest => length_f64 rest (n + 1i32)
-    | [] => n
-
-:== spread = { low : f64; middle : f64; high : f64 }
-
-:~ spread_of (xs : list f64) : spread =
-    := s = sorted_f64 xs []
-    := n = length_f64 s 0i32
-    { low = f64_at (n / 4i32) s; middle = f64_at (n / 2i32) s; high = f64_at ((3i32 * n) / 4i32) s }
-
 :| time_verdict =
-    | Ratio : spread
-    | Void : spread
+    | Ratio : bench_model::spread
+    | Void : bench_model::spread
 
-:= aa_band (aa : spread) : time_verdict = ? aa::middle >= 0.95 && aa::middle <= 1.05 ?> Ratio aa |: Void aa
+:= aa_band (aa : bench_model::spread) : time_verdict = ? aa::middle >= 0.95 && aa::middle <= 1.05 ?> Ratio aa |: Void aa
 
 :~ ^ digits_of (n : i64) : string =
     := tail = sm'::obj_to_string (n % 10i64)
@@ -297,11 +212,11 @@
     | LazyArm => "lazy DFA (interned nodes, memoized steps)"
     | LazyStoreArm => "lazy DFA, array store (node x class table)"
 
-:= spread_cells (s : spread) : list markup::markup =
+:= spread_cells (s : bench_model::spread) : list markup::markup =
     [ markup::escape (milli_text s::middle); markup::escape (milli_text s::low ++# " - " ++# milli_text s::high) ]
 
 :~ time_row (aa : time_verdict) (all : list (list sample)) (a : arm) : list markup::markup =
-    := s = spread_of (ratios a all)
+    := s = bench_model::spread_of (ratios a all)
     := name = markup::escape (arm_name a)
     ?= aa ?|
     | Ratio _ => name :: spread_cells s
@@ -376,6 +291,36 @@
     := header = listm::map markup::escape [ "arm"; "median time / baseline A"; "IQR" ]
     markup::table header (listm::map (time_row aa all) (all_arms ()))
 
+:~ ^ setups (r : re) (left : i32) (dead : i32) : i32 =
+    ? left <= 0i32
+    ?> dead
+    |:
+        := t = table_of (certified_of r)
+        setups r (left - 1i32) (dead + t::dead)
+
+:~ setup_ms (r : re) : f64 =
+    := before = date_time.monotonic_nanoseconds ()
+    := dead = setups r 25i32 0i32
+    := spent = date_time.monotonic_nanoseconds () - before
+    ? dead < 0i32 ?> 0.0 |: (conv spent : f64) / 25000000.0
+
+:~ ^ table_pass_ms (all : list (list sample)) : list f64 =
+    ?= all ?|
+    | round :: rest =>
+        := s = sample_of TableArm round
+        ((conv s::nanos : f64) / 25000000.0) :: table_pass_ms rest
+    | [] => []
+
+:~ timed_text (ms : f64) : string =
+    := u = bench_model::unit_of ms
+    milli_text (bench_model::in_unit u ms) ++# " " ++# bench_model::unit_name u
+
+:~ setup_line (r : re) (all : list (list sample)) : markup::markup =
+    := build = "setup " ++# timed_text (setup_ms r) ++# " per certified table build (mean of 25)"
+    := passes = bench_model::spread_of (table_pass_ms all)
+    := pass = ", one array table pass " ++# timed_text passes::middle ++# " (median)"
+    markup::element "p" [] (markup::escape (build ++# pass))
+
 :~ facts_of (salt : u32) (w : workload) (p : prepared) (all : list (list sample)) : facts =
     := c = certification_of p::quotient
     := a = agreement_on salt 40u32 p::regex
@@ -386,7 +331,8 @@
     := p = prepare salt 400u32 w
     := all = rounds p 0i32 15i32 []
     := f = facts_of salt w p all
-    := html = markup::joined (facts_head f) (time_table (aa_band (spread_of (ratios MinimalAgainArm all))) all)
+    := table = time_table (aa_band (bench_model::spread_of (ratios MinimalAgainArm all))) all
+    := html = markup::concat [ facts_head f; setup_line p::regex all; table ]
     { html = html; failures = ? f::ok ?> 0i32 |: 1i32 }
 :~ ^ all_reports (salt : u32) (ws : list workload) (acc : report) : report =
     ?= ws ?|
@@ -403,10 +349,31 @@
         ^^ "(Instant)"
     markup::element "p" [] (markup::escape (runner ++# method))
 
-:= main () : i32 =
+:~ ^ module_text (lines : list string) : string =
+    ?= lines ?|
+    | [] => ""
+    | [ last ] => last
+    | line :: rest => line ++# "\n\n" ++# module_text rest
+
+:= staged_header () : string =
+    "///- --package . --timeout 900000\n:# staged_tables static =\n    :< testing\n\n:< regex_table\n:< table_emit\n\n"
+
+:~ staged_lines (k : i32) (w : workload) : list string = table_lines ("s" ++# sm'::show k ++# "_") (minimal_table (workload_regex w))
+
+:~ staged_all () : list string =
+    := small = listm::append (staged_lines 1i32 EndsInZero) (listm::append (staged_lines 2i32 ZeroRuns) (staged_lines 3i32 FourthFromEnd))
+    listm::append small (listm::append (staged_lines 4i32 CountedLetters) (staged_lines 5i32 EighthFromEnd))
+
+:~ emit_staged () : i32 =
+    print_line (staged_header () ++# module_text (staged_all ()))
+    0i32
+
+:~ run_bench () : i32 =
     := ~salt = 20261101u32
     := ws = [ EndsInZero; ZeroRuns; FourthFromEnd; CountedLetters; FourthFromEndLong; EighthFromEnd ]
     := r = all_reports salt ws { html = markup::trusted ""; failures = 0i32 }
     := body = markup::concat [ markup::element "h1" [] (markup::escape "regex benchmarks"); stamp (); r::html ]
     markup::document "regex benchmarks" (markup::trusted "") body |> markup::markup_text |> print_line
     r::failures
+
+:= main () : i32 = ? env_text "REGEX_EMIT_STAGED" <> "" ?> emit_staged () |: run_bench ()

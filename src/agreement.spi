@@ -5,9 +5,10 @@
 :< regex_charset
 :< regex_syntax
 :< regex_derivative
-:< dfa
-:< minimal
-:< certificate
+:< regex_dfa
+:< regex_minimal
+:< regex_certificate
+:< regex_xsd
 :< partial
 :< keyed_rng
 

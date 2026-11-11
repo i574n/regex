@@ -6,7 +6,7 @@
 :< regex_syntax
 :< regex_nullable
 :< regex_derivative
-:< dfa
+:< regex_dfa
 
 :! interned = i32
 
@@ -166,10 +166,17 @@
     am'::set_base used 0i32 n
     used
 
+:~ holder \* el. (inner : array_base el) : array_base (array_base el) =
+    := cell : array_base (array_base el) = am'::create_base 1i32
+    am'::set_base cell 0i32 inner
+    cell
+
+:~ empty_holder \* el. () : array_base (array_base el) = holder (am'::create_base 0i32)
+
 :~ new_store (k : i32) (cap : i32) (lows : array_base u32) : store =
     {
         width = k; cap = cap; lows = lows; used = counter_at 0i32
-        steps = am'::create_base 1i32; nodes = am'::create_base 1i32; links = am'::create_base 1i32
+        steps = empty_holder (); nodes = empty_holder (); links = empty_holder ()
     }
 
 :~ empty_store (r : re) (cap : i32) : store =
@@ -263,19 +270,21 @@
     := s, start = store_of r 4096i32
     store_misses s start (build r) (words_upto 6i32 [ [] ] []) 0i32
 
+///> c
 ///> rust
 ///> gleam
 :# the_lazy_engine_agrees_with_the_eager_dfa_on_every_short_word =
     listm::map (\ r => against_eager r) [ fourth_from_end (); zero_runs (); ends_in_zero () ]
     |> _assert_eq [ (0i32, 16i32); (0i32, 4i32); (0i32, 2i32) ]
 
+///> c
 ///> rust
 ///> gleam
 :# one_word_interns_only_the_states_it_visits =
-    := four = run_lazy (fourth_from_end ()) [ 49u32; 48u32; 48u32; 48u32 ]
-    := single = run_lazy (fourth_from_end ()) [ 48u32 ]
-    (four, single) |> _assert_eq ((Accepted, 5i32), (Rejected, 1i32))
+    := ~r = fourth_from_end ()
+    (run_lazy r [ 49u32; 48u32; 48u32; 48u32 ], run_lazy r [ 48u32 ]) |> _assert_eq ((Accepted, 5i32), (Rejected, 1i32))
 
+///> c
 ///> rust
 ///> gleam
 :# the_lazy_engine_answers_where_the_eager_cap_refuses =
@@ -283,11 +292,13 @@
     := v, _ = run_lazy r [ 48u32; 49u32; 48u32; 49u32; 49u32 ]
     (refused (size_of (build_within 4i32 r)), v) |> _assert_eq (!+, Accepted)
 
+///> c
 ///> rust
 :# the_array_store_agrees_with_the_eager_dfa_and_interns_the_same_nodes =
     listm::map (\ r => store_against_eager r) [ fourth_from_end (); zero_runs (); ends_in_zero () ]
     |> _assert_eq [ (0i32, 16i32); (0i32, 4i32); (0i32, 2i32) ]
 
+///> c
 ///> rust
 :# a_full_store_answers_overflowed_instead_of_growing =
     := s, start = store_of (fourth_from_end ()) 2i32

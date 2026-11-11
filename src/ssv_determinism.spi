@@ -1,0 +1,47 @@
+///- --package .
+:# ssv_determinism static =
+    :< testing
+
+:< regex_derivative
+:< regex_minimal
+:< ssv_graph
+:< ssv_layout
+
+:| diff_at =
+    | Same
+    | DiffAt : i32
+
+:~ ^ layout_digests (g : graph) (k : i32) (n : i32) (acc : list i64) : list i64 =
+    ? k >= n ?> listm::rev acc |: layout_digests g (k + 1i32) n (digest (layout g k) :: acc)
+
+:~ frame_digests (g : graph) : list i64 = layout_digests g 0i32 (listm::length g::states) []
+
+:~ ^ first_diff (a : list i64) (b : list i64) (i : i32) : diff_at =
+    ?= a, b ?|
+    | (x :: xs), (y :: ys) => ? x = y ?> first_diff xs ys (i + 1i32) |: DiffAt i
+    | [], [] => Same
+    | _ => DiffAt i
+
+:~ ^ bump_at (xs : list i64) (i : i32) : list i64 =
+    ?= xs ?|
+    | [] => []
+    | x :: rest => ? i = 0i32 ?> (x + 1i64) :: rest |: x :: bump_at rest (i - 1i32)
+
+:~ differs (a : list i64) (b : list i64) : bool =
+    ?= first_diff a b 0i32 ?| | Same => !- | DiffAt _ => !+
+
+///> rust
+:# every_layout_frame_hashes_identically_across_two_renders =
+    := g = graph_or_empty (fourth_from_end ())
+    first_diff (frame_digests g) (frame_digests g) 0i32 |> _assert_eq Same
+
+///> rust
+:# a_single_jittered_frame_is_caught_at_its_index =
+    := ds = frame_digests (graph_or_empty (fourth_from_end ()))
+    first_diff ds (bump_at ds 1i32) 0i32 |> _assert_eq (DiffAt 1i32)
+
+///> rust
+:# different_graphs_do_not_share_their_frame_hashes =
+    := a = frame_digests (graph_or_empty (fourth_from_end ()))
+    := b = frame_digests (graph_or_empty (tri_cyclic_nonminimal ()))
+    differs a b |> _assert_eq !+

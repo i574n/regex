@@ -1,0 +1,137 @@
+///- --package . --timeout 900000
+:# ssv_graph static =
+    :< testing
+
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< regex_minimal
+
+:| state_kind =
+    | Accepting
+    | Live
+    | DeadEnd
+
+:| edge_end =
+    | ToState : i32
+    | ToDead
+
+:== state_row = { index : i32; kind : state_kind }
+
+:== edge_row = { source : i32; codes : code_range; target : edge_end }
+
+:== merge_round = { round : i32; blocks : i32; members : list i32 }
+
+:== graph = { states : list state_row; edges : list edge_row; rounds : list merge_round }
+
+:~ kind_of (r : row) (live : bool) : state_kind = ? r::accepting = Accepted ?> Accepting |? live ?> Live |: DeadEnd
+
+:~ end_of (t : target) : edge_end =
+    ?= t ?|
+    | To s => ToState (state_index s)
+    | Dead => ToDead
+
+:~ ^ edges_of (s : i32) (cs : list code_range) (ts : list target) (acc : list edge_row) : list edge_row =
+    ?= cs, ts ?|
+    | (c :: cr), (t :: tr) => edges_of s cr tr ({ source = s; codes = c; target = end_of t } :: acc)
+    | _ => acc
+
+:== walk = { states : list state_row; edges : list edge_row }
+
+:~ walked (w : walk) (index : i32) (r : row) (classes : list code_range) (live : list bool) : walk =
+    := s = { index = index; kind = kind_of r (bool_at index live) }
+    { states = s :: w::states; edges = edges_of index classes r::next w::edges }
+
+:~ ^ rows_walk (rs : list row) (cs : list code_range) (live : list bool) (i : i32) (w : walk) : walk =
+    ?= rs ?|
+    | [] => { states = listm::rev w::states; edges = listm::rev w::edges }
+    | r :: rest => rows_walk rest cs live (i + 1i32) (walked w i r cs live)
+
+:~ refine_once (rs : list row) (bs : list block) : refined = refine_rows rs 0i32 bs { blocks = []; seen = []; count = 0i32 }
+
+:~ block_id (b : block) : i32 =
+    ?= b ?|
+    | Block id => id
+    | DeadBlock => -1i32
+
+:~ ^ member_ids (bs : list block) : list i32 =
+    ?= bs ?|
+    | b :: rest => block_id b :: member_ids rest
+    | [] => []
+
+:~ round_on (k : i32) (r : refined) (acc : list merge_round) : list merge_round =
+    { round = k; blocks = r::count; members = member_ids r::blocks } :: acc
+
+:~ ^ rounds_from (rs : list row) (bs : list block) (n : i32) (k : i32) (acc : list merge_round) : list merge_round =
+    := r = refine_once rs bs
+    := m = round_on k r acc
+    ? r::count = n ?> listm::rev m |: rounds_from rs r::blocks r::count (k + 1i32) m
+
+:~ merge_rounds (d : dfa) : list merge_round =
+    := blocks0 = initial_blocks d::rows (live_states d) 0i32
+    := count0 = count_blocks blocks0 [] 0i32
+    rounds_from d::rows blocks0 count0 1i32 [ { round = 0i32; blocks = count0; members = member_ids blocks0 } ]
+
+:~ graph_of (d : dfa) : graph =
+    := w = rows_walk d::rows d::classes (live_states d) 0i32 { states = []; edges = [] }
+    { states = w::states; edges = w::edges; rounds = merge_rounds d }
+
+:~ graph_or_empty (r : re) : graph =
+    ?= build r ?|
+    | Built d => graph_of d
+    | StateCapReached _ => { states = []; edges = []; rounds = [] }
+
+:~ kinds (g : graph) : list state_kind = listm::map (\ (s : state_row) => s::kind) g::states
+
+:~ to_state (e : edge_row) : bool =
+    ?= e::target ?|
+    | ToState _ => !+
+    | ToDead => !-
+
+:~ live_edges (g : graph) : i32 = listm::fold (\ n (e : edge_row) => ? to_state e ?> n + 1i32 |: n) 0i32 g::edges
+
+:~ final_blocks (g : graph) : i32 = listm::fold (\ _ (m : merge_round) => m::blocks) 0i32 g::rounds
+
+:~ first_blocks (g : graph) : i32 = listm::fold (\ acc (m : merge_round) => ? m::round = 0i32 ?> m::blocks |: acc) 0i32 g::rounds
+
+:~ agrees (r : re) : bool * bool =
+    := g = graph_or_empty r
+    (States (listm::length g::states) = size_of (build r), States (final_blocks g) = minimal_size (build r))
+
+///> rust
+:# three_states_walk_in_discovery_order_with_two_live_edges =
+    := g = graph_or_empty (seq (zero ()) (one ()))
+    (kinds g, live_edges g) |> _assert_eq ([ Live; Live; Accepting ], 2i32)
+
+///> rust
+:# an_intersection_with_no_accepting_word_is_all_dead_ends =
+    := g = graph_or_empty (both (seq (zero ()) (one ())) (seq (zero ()) (zero ())))
+    (kinds g, live_edges g) |> _assert_eq ([ DeadEnd; DeadEnd ], 1i32)
+
+///> rust
+:# the_graph_agrees_with_the_dfa_and_the_minimal_engines =
+    := wide = agrees (fourth_from_end ())
+    := cyclic = agrees (tri_cyclic_nonminimal ())
+    (wide, cyclic) |> _assert_eq ((!+, !+), (!+, !+))
+
+///> rust
+:# merge_rounds_start_from_the_accepting_split_and_end_stable =
+    := g = graph_or_empty (tri_cyclic_nonminimal ())
+    (first_blocks g, final_blocks g) |> _assert_eq (2i32, 2i32)
+
+:~ final_members (g : graph) : list i32 = listm::fold (\ _ (m : merge_round) => m::members) [] g::rounds
+
+:~ ^ distinct_ids (ids : list i32) (seen : list i32) : i32 =
+    ?= ids ?|
+    | i :: rest => ? i < 0i32 || has_id i seen ?> distinct_ids rest seen |: distinct_ids rest (i :: seen)
+    | [] => listm::length seen
+
+:~ final_round_agrees (r : re) : bool * bool =
+    := g = graph_or_empty r
+    := ids = final_members g
+    (States (distinct_ids ids []) = minimal_size (build r), (listm::length ids : i32) = listm::length g::states)
+
+///> rust
+:# the_final_round_names_one_block_per_minimal_state =
+    (final_round_agrees (tri_cyclic_nonminimal ()), final_round_agrees (fourth_from_end ())) |> _assert_eq ((!+, !+), (!+, !+))

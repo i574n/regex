@@ -6,7 +6,7 @@
 :< regex_syntax
 :< regex_nullable
 :< regex_derivative
-:< dfa
+:< regex_dfa
 :< regex_language
 :< lazy
 

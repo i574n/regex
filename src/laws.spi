@@ -103,6 +103,58 @@
         | broken => broken
     | [] => AllHold checked
 
+:= flip_order (o : order) : order =
+    ?= o ?|
+    | Before => After
+    | After => Before
+    | Same => Same
+
+:| coherence =
+    | Coherent
+    | NotReflexive : re
+    | NotAntisymmetric : re * re
+    | NotTransitive : re * re * re
+
+:~ ^ transitive_from (a : re) (b : re) (cs : list re) : coherence =
+    ?= cs ?|
+    | c :: rest =>
+        ? order_re b c = Before && order_re a c <> Before
+        ?> NotTransitive (a, b, c)
+        |: transitive_from a b rest
+    | [] => Coherent
+
+:~ pair_coherence (a : re) (b : re) (corpus : list re) : coherence =
+    := ab = order_re a b
+    ? ab <> flip_order (order_re b a)
+    ?> NotAntisymmetric (a, b)
+    |? ab = Before
+    ?> transitive_from a b corpus
+    |: Coherent
+
+:~ ^ coherent_with (a : re) (bs : list re) (corpus : list re) : coherence =
+    ?= bs ?|
+    | b :: rest =>
+        ?= pair_coherence a b corpus ?|
+        | Coherent => coherent_with a rest corpus
+        | broken => broken
+    | [] => Coherent
+
+:~ element_coherence (a : re) (corpus : list re) : coherence =
+    ? order_re a a <> Same ?> NotReflexive a |: coherent_with a corpus corpus
+
+:~ ^ order_coherent (xs : list re) (corpus : list re) : coherence =
+    ?= xs ?|
+    | a :: rest =>
+        ?= element_coherence a corpus ?|
+        | Coherent => order_coherent rest corpus
+        | broken => broken
+    | [] => Coherent
+
+///> rust
+///> gleam
+:# the_regex_order_is_reflexive_antisymmetric_and_transitive_on_depth_one =
+    order_coherent (depth_one ()) (depth_one ()) |> _assert_eq Coherent
+
 ///> rust
 ///> gleam
 :# every_regex_of_depth_one_keeps_all_five_laws_on_every_short_word =

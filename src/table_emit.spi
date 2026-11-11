@@ -1,0 +1,115 @@
+///- --package . --timeout 900000
+:# table_emit static =
+    :< testing
+
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< regex_certificate
+:< regex_table
+:< lazy
+:< sm'_operators
+
+:~ ^ list_of_base \* el. (a : array_base el) (i : i32) (acc : list el) : list el =
+    ? i < 0i32 ?> acc |: list_of_base a (i - 1i32) (am'::index_base i a :: acc)
+
+:~ base_list \* el. (a : array_base el) : list el = list_of_base a (am'::length_base a - 1i32) []
+
+:~ ^ fill_from \* el. (a : array_base el) (xs : list el) (i : i32) : () =
+    ?= xs ?|
+    | x :: rest =>
+        am'::set_base a i x
+        fill_from a rest (i + 1i32)
+    | [] => ()
+
+:~ array_of \* el. (xs : list el) : array_base el =
+    := a : array_base el = am'::create_base (listm::length xs)
+    fill_from a xs 0i32
+    a
+
+:~ rebuilt (t : table) : table =
+    {
+        width = t::width; dead = t::dead; start = t::start; lows = array_of (base_list t::lows)
+        next = array_of (base_list t::next); accepting = array_of (base_list t::accepting)
+    }
+
+:== texts = list string
+
+:== groups = list texts
+
+:~ closed (n : i32) (cur : texts) (acc : groups) : groups = ? n = 0i32 ?> listm::rev acc |: listm::rev (listm::rev cur :: acc)
+
+:~ ^ chunked (xs : texts) (n : i32) (cur : texts) (acc : groups) : groups =
+    ?= xs ?|
+    | [] => closed n cur acc
+    | x :: rest => ? n = 23i32 ?> chunked rest 0i32 [] (listm::rev (x :: cur) :: acc) |: chunked rest (n + 1i32) (x :: cur) acc
+
+:~ ^ joined_items (xs : list string) : string =
+    ?= xs ?|
+    | [] => ""
+    | [ x ] => x
+    | x :: rest => x ++# "; " ++# joined_items rest
+
+:~ previous_part (p : string) (name : string) (k : i32) : string = ? k = 0i32 ?> "[]" |: p ++# name ++# sm'::show (k - 1i32) ++# " ()"
+
+:~ chunk_line (p : string) (name : string) (ty : string) (k : i32) (xs : texts) : string =
+    := head = ":= " ++# p ++# name ++# sm'::show k ++# " () : list " ++# ty
+    head ++# " = listm::append (" ++# previous_part p name k ++# ") [ " ++# joined_items xs ++# " ]"
+
+:~ ^ emit_list (p : string) (name : string) (ty : string) (k : i32) (cs : list (list string)) : list string =
+    ?= cs ?|
+    | [] => []
+    | c :: rest => chunk_line p name ty k c :: emit_list p name ty (k + 1i32) rest
+
+:~ item_text (suffix : string) (x : i32) : string = sm'::show x ++# suffix
+
+:~ bool_text (b : bool) : string = ? b ?> "!+" |: "!-"
+
+:~ last_name (p : string) (name : string) (count : i32) : string = p ++# name ++# sm'::show ((count + 23i32) / 24i32 - 1i32) ++# " ()"
+
+:~ sizes_text (t : table) : string =
+    "width = " ++# sm'::show t::width ++# "; dead = " ++# sm'::show t::dead ++# "; start = " ++# sm'::show t::start
+
+:~ field_text (p : string) (name : string) (count : i32) : string = name ++# " = array_of (" ++# last_name p name count ++# ")"
+
+:~ fields_text (p : string) (t : table) : string =
+    := lows = field_text p "lows" (am'::length_base t::lows)
+    lows ++# "; " ++# field_text p "next" (am'::length_base t::next) ++# "; " ++# field_text p "accepting" (am'::length_base t::accepting)
+
+:~ table_line (p : string) (t : table) : string =
+    ":= " ++# p ++# "table () : table =\n    {\n        " ++# sizes_text t ++# "\n        " ++# fields_text p t ++# "\n    }"
+
+:~ field_lines (p : string) (name : string) (ty : string) (items : texts) : texts = emit_list p name ty 0i32 (chunked items 0i32 [] [])
+
+:~ code_text (c : u32) : string = sm'::show c ++# "u32"
+
+:~ lows_lines (p : string) (t : table) : texts = field_lines p "lows" "u32" (listm::map code_text (base_list t::lows))
+
+:~ next_lines (p : string) (t : table) : texts = field_lines p "next" "i32" (listm::map (item_text "i32") (base_list t::next))
+
+:~ accepting_lines (p : string) (t : table) : texts =
+    field_lines p "accepting" "bool" (listm::map bool_text (base_list t::accepting))
+
+:~ table_lines (p : string) (t : table) : texts =
+    listm::append (lows_lines p t) (listm::append (next_lines p t) (listm::append (accepting_lines p t) [ table_line p t ]))
+
+:~ ^ answers_agree (a : table) (b : table) (words : list (list u32)) : bool =
+    ?= words ?|
+    | [] => !+
+    | w :: rest => table_run a (array_of_codes w) = table_run b (array_of_codes w) && answers_agree a b rest
+
+:= chunk_count (n : i32) : i32 = (n + 23i32) / 24i32
+
+:~ expected_definitions (t : table) : i32 =
+    := lows = chunk_count (am'::length_base t::lows)
+    lows + chunk_count (am'::length_base t::next) + chunk_count (am'::length_base t::accepting) + 1i32
+
+///> rust
+:# a_table_rebuilt_from_its_lists_answers_like_the_certified_one_on_every_word_up_to_six =
+    := t = minimal_table (fourth_from_end ())
+    answers_agree t (rebuilt t) (words_upto 6i32 [ [] ] []) |> _assert_eq !+
+
+///> rust
+:# the_emitted_module_has_one_definition_per_chunk_and_the_table =
+    := t = minimal_table (fourth_from_end ())
+    listm::length (table_lines "s" t) |> _assert_eq (expected_definitions t)

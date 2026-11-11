@@ -3,9 +3,12 @@
     :< testing
 
 :< regex_syntax
+:< regex_charset
 :< regex_derivative
 :< lazy
 :< fin_vector
+:< regex_dfa
+:< regex_certificate
 
 :== n1 = nat_succ nat_zero
 
@@ -167,11 +170,102 @@
 
 :~ core_answer (w : list u32) : verdict = run_core (fourth_core ()) (q0 ()) w
 
+:~ core_next (core : vector n16 bit_row) (at : fin n16) (c : u32) : fin n16 =
+    := _, on_zero, on_one = item at core
+    ? c = 48u32 ?> on_zero |: on_one
+
+:~ ^ mapped_to (k : i32) (seen : list (i32 * target)) : option target =
+    ?= seen ?|
+    | (j, t) :: rest => ? j = k ?> Some t |: mapped_to k rest
+    | [] => None
+
+:~ ^ target_taken (t : target) (seen : list (i32 * target)) : bool =
+    ?= seen ?|
+    | (_, u) :: rest => u = t || target_taken t rest
+    | [] => !-
+
+:~ successors_of (core : vector n16 bit_row) (d : dfa) (q : fin n16) (t : target) : list (fin n16 * target) =
+    [ (core_next core q 48u32, step d t 48u32); (core_next core q 49u32, step d t 49u32) ]
+
+:== pairing = vector n16 bit_row * dfa
+
+:== todo = list (fin n16 * target)
+
+:== seen = list (i32 * target)
+
+:~ clashes (x : pairing) (q : fin n16) (t : target) (s : seen) : bool =
+    := core, d = x
+    accepting_at core q <> verdict_at d t || target_taken t s
+
+:~ todo_after (x : pairing) (q : fin n16) (t : target) (rest : todo) : todo =
+    := core, d = x
+    listm::append rest (successors_of core d q t)
+
+:~ ^ bisim (x : pairing) (pending : todo) (s : seen) : i32 =
+    ?= pending ?|
+    | (q, t) :: rest => bisim_pair x q t rest s
+    | [] => listm::length s
+
+:& :~ bisim_pair (x : pairing) (q : fin n16) (t : target) (rest : todo) (s : seen) : i32 =
+    ?= mapped_to (fin_value q) s ?|
+    | Some u => ? u = t ?> bisim x rest s |: -1i32
+    | None => bisim_new x q t rest s
+
+:& :~ bisim_new (x : pairing) (q : fin n16) (t : target) (rest : todo) (s : seen) : i32 =
+    ? clashes x q t s ?> -1i32 |: bisim x (todo_after x q t rest) ((fin_value q, t) :: s)
+
 :~ ^ replay_misses (words : list (list u32)) (n : i32) : i32 =
     ?= words ?|
     | w :: rest => replay_misses rest (? core_answer w = matches (fourth_from_end ()) w ?> n |: n + 1i32)
     | [] => n
 
+:== indexed_row = verdict * vector n2 (fin n16)
+
+:~ indexed_of (r : bit_row) : indexed_row =
+    := accept, on_zero, on_one = r
+    accept, VectorCons (on_zero, VectorCons (on_one, VectorEnd))
+
+:~ indexed_core () : vector n16 indexed_row = mapped indexed_of (fourth_core ())
+
+:~ bit_class (c : u32) : option (fin n2) =
+    ? c = 48u32 ?> Some FinFirst |? c = 49u32 ?> Some (FinNext FinFirst) |: None
+
+:~ ^ run_indexed (core : vector n16 indexed_row) (at : fin n16) (codes : list u32) : verdict =
+    ?= codes ?|
+    | c :: rest => indexed_step core at (bit_class c) rest
+    | [] =>
+        := accept, _ = item at core
+        accept
+
+:& :~ indexed_step (core : vector n16 indexed_row) (at : fin n16) (found : option (fin n2)) (rest : list u32) : verdict =
+    ?= found ?|
+    | Some k =>
+        := _, targets = item at core
+        run_indexed core (item k targets) rest
+    | None => Rejected
+
+:~ ^ indexed_misses (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => indexed_misses rest (? run_indexed (indexed_core ()) (q0 ()) w = core_answer w ?> n |: n + 1i32)
+    | [] => n
+
+:= two_covered () : vector n2 (fin n1) = VectorCons (FinFirst, VectorCons (FinFirst, VectorEnd))
+
+:= one_origin () : vector n1 (fin n2) = VectorCons (FinNext FinFirst, VectorEnd)
+
+:~ require_exact_coverage \* closures reps.
+    (states : vector closures bit_row) (coverage : vector closures (fin reps))
+    : i32
+    =
+    rank states + rank coverage
+
+:~ require_exact_origins \* reps closures.
+    (representatives : vector reps bit_row) (origins : vector reps (fin closures))
+    : i32
+    =
+    rank representatives + rank origins
+
+///> c
 ///> rust
 ///> gleam
 :# the_typed_core_answers_like_the_derivatives_on_every_word_up_to_six =
@@ -179,11 +273,176 @@
     |> _assert_eq (0i32, Accepted, Rejected)
 
 ///> rust
+///> gleam
+:# the_typed_core_is_the_certified_minimal_dfa_up_to_renaming =
+    := d = minimal_of (fourth_from_end ())
+    (bisim (fourth_core (), d) [ (q0 (), d::start) ] [], state_count d) |> _assert_eq (16i32, 16i32)
+
+///> rust
 :# a_core_one_row_short_does_not_type fails "Unification failure" =
     := core : vector n16 bit_row = v15 ()
     run_core core (q0 ()) [] |> _assert_eq Rejected
 
 ///> rust
+///> gleam
+:# a_row_indexed_by_the_class_count_answers_like_the_bit_row_on_every_word_up_to_six =
+    (indexed_misses (words_upto 6i32 [ [] ] []) 0i32, run_indexed (indexed_core ()) (q0 ()) [ 50u32 ])
+    |> _assert_eq (0i32, Rejected)
+
+///> rust
+///> gleam
+:# coverage_and_origin_vectors_carry_exactly_one_entry_per_state =
+    (require_exact_coverage (v2 ()) (two_covered ()), require_exact_origins (v1 ()) (one_origin ()))
+    |> _assert_eq (4i32, 2i32)
+
+///> rust
+:# a_row_with_one_target_for_two_classes_does_not_type fails "Unification failure" =
+    := short : indexed_row = Accepted, VectorCons (q0 (), VectorEnd)
+    := accept, _ = short
+    accept |> _assert_eq Accepted
+
+///> rust
+:# one_coverage_entry_for_two_closure_states_does_not_type fails "Unification failure" =
+    := coverage : vector n1 (fin n1) = VectorCons (FinFirst, VectorEnd)
+    require_exact_coverage (v2 ()) coverage |> _assert_eq 3i32
+
+///> rust
+:# one_origin_for_two_representatives_does_not_type fails "Unification failure" =
+    := origins : vector n1 (fin n2) = VectorCons (FinFirst, VectorEnd)
+    require_exact_origins (v2 ()) origins |> _assert_eq 3i32
+
+///> rust
 :# a_target_past_the_last_state_does_not_type fails "Unification failure" =
     := past : fin n2 = FinNext (FinNext FinFirst)
     fin_value past |> _assert_eq 2i32
+
+:== sized_dfa s n = { start : fin n; accepting : vector n bool; targets : vector n (vector s (fin n)) }
+
+:| some_sized_dfa s =
+    | SomeSizedDfa : (\? n. sized_dfa s n)
+
+:= ^ sized_run \* s n. (d : sized_dfa s n) (at : fin n) (symbols : list (fin s)) : bool =
+    ?= symbols ?|
+    | [] => item at d::accepting
+    | c :: rest => sized_run d (item c (item at d::targets)) rest
+
+:= sized_states \* s. (p : some_sized_dfa s) : i32 =
+    ?= p ?|
+    | SomeSizedDfa packed =>
+        := \? n. d = packed
+        rank d::accepting
+
+:= to_zero_row () : vector n2 (fin n2) = VectorCons (FinNext FinFirst, VectorCons (FinFirst, VectorEnd))
+
+:= ends_in_zero_sized () : sized_dfa n2 n2 =
+    := rows = VectorCons (to_zero_row (), VectorCons (to_zero_row (), VectorEnd))
+    { start = FinFirst; accepting = VectorCons (!-, VectorCons (!+, VectorEnd)); targets = rows }
+
+:= bit0 () : fin n2 = FinFirst
+
+:= bit1 () : fin n2 = FinNext FinFirst
+
+///> rust
+:# a_sized_dfa_names_only_its_states_and_packs_its_size =
+    := d = ends_in_zero_sized ()
+    := s = d::start
+    (sized_run d s [ bit1 (); bit0 () ], sized_run d s [ bit0 (); bit1 () ], sized_states (SomeSizedDfa (\? d)))
+    |> _assert_eq (!+, !-, 2i32)
+
+:~ cons_found \* el. (head : option el) (tail : option (list el)) : option (list el) =
+    ?= head ?|
+    | Some h =>
+        ?= tail ?|
+        | Some t => Some (h :: t)
+        | None => None
+    | None => None
+
+:~ in_range (c : u32) (r : code_range) : bool = c >= r::low && c <= r::high
+
+:~ inventory_symbol \* n. (alphabet : vector n code_range) (c : u32) : option (fin n) = find_fin (in_range c) alphabet
+
+:~ ^ word_of \* n. (alphabet : vector n code_range) (codes : list u32) : option (list (fin n)) =
+    ?= codes ?|
+    | c :: rest => cons_found (inventory_symbol alphabet c) (word_of alphabet rest)
+    | [] => Some []
+
+:~ ^ overlaps_any (r : code_range) (others : list code_range) : bool =
+    ?= others ?|
+    | [] => !-
+    | o :: rest => ? r::low <= o::high && o::low <= r::high ?> !+ |: overlaps_any r rest
+
+:~ ^ disjoint_ranges (ranges : list code_range) : bool =
+    ?= ranges ?|
+    | [] => !+
+    | r :: rest => ? overlaps_any r rest ?> !- |: disjoint_ranges rest
+
+:~ disjoint \* n. (alphabet : vector n code_range) : bool = disjoint_ranges (to_list alphabet)
+
+:~ ident_alphabet () : vector n3 code_range =
+    VectorCons (range 97u32 122u32, VectorCons (range 48u32 57u32, VectorCons (range 95u32 95u32, VectorEnd)))
+
+:~ symbol_at \* n. (alphabet : vector n code_range) (c : u32) : i32 = found_at (inventory_symbol alphabet c)
+
+:~ word_length \* n. (word : option (list (fin n))) : i32 =
+    ?= word ?|
+    | Some symbols => listm::length symbols
+    | None => -1i32
+
+///> rust
+:# an_inventory_alphabet_maps_codes_to_type_sized_symbols =
+    := a = ident_alphabet ()
+    (symbol_at a 113u32, symbol_at a 53u32, symbol_at a 95u32, symbol_at a 33u32)
+    |> _assert_eq (0i32, 1i32, 2i32, -1i32)
+
+///> rust
+:# a_word_with_one_code_outside_the_inventory_has_no_symbols =
+    := a = ident_alphabet ()
+    (word_length (word_of a [ 97u32; 49u32; 95u32 ]), word_length (word_of a [ 97u32; 33u32 ]))
+    |> _assert_eq (3i32, -1i32)
+
+///> rust
+:# overlapping_ranges_do_not_form_an_inventory =
+    (disjoint (ident_alphabet ()), disjoint_ranges [ range 97u32 122u32; range 100u32 110u32 ]) |> _assert_eq (!+, !-)
+
+:! acceptance_capability = list u32 -> verdict
+
+:== engines = acceptance_capability * acceptance_capability
+
+:~ answer_with (c : acceptance_capability) (w : list u32) : verdict =
+    ?= c ?|
+    | acceptance_capability accept => accept w
+
+:~ reference_acceptance (r : re) : acceptance_capability = acceptance_capability (matches r)
+
+:~ core_acceptance () : acceptance_capability = acceptance_capability core_answer
+
+:~ indexed_acceptance () : acceptance_capability = acceptance_capability (run_indexed (indexed_core ()) (q0 ()))
+
+:~ rejecting (w : list u32) : verdict = Rejected
+
+:~ agree (pair : engines) (w : list u32) : bool =
+    := reference, fast = pair
+    answer_with reference w = answer_with fast w
+
+:~ ^ misses_between (pair : engines) (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => misses_between pair rest (? agree pair w ?> n |: n + 1i32)
+    | [] => n
+
+:~ words_to_six () : list (list u32) = words_upto 6i32 [ [] ] []
+
+:~ fourth_reference () : acceptance_capability = reference_acceptance (fourth_from_end ())
+
+///> rust
+///> gleam
+:# the_core_capability_answers_like_the_reference_on_every_word_up_to_six =
+    misses_between (fourth_reference (), core_acceptance ()) (words_to_six ()) 0i32 |> _assert_eq 0i32
+
+///> rust
+///> gleam
+:# the_indexed_capability_answers_like_the_reference_on_every_word_up_to_six =
+    misses_between (fourth_reference (), indexed_acceptance ()) (words_to_six ()) 0i32 |> _assert_eq 0i32
+
+///> rust
+:# a_capability_that_rejects_everything_misses_every_accepted_word =
+    misses_between (fourth_reference (), acceptance_capability rejecting) (words_to_six ()) 0i32 |> _assert_eq 56i32
