@@ -113,3 +113,39 @@
 :# the_emitted_module_has_one_definition_per_chunk_and_the_table =
     := t = minimal_table (fourth_from_end ())
     listm::length (table_lines "s" t) |> _assert_eq (expected_definitions t)
+
+:== table_lists = { width : i32; dead : i32; start : i32; lows : list u32; next : list i32; accepting : list bool }
+
+:~ lists_of (t : table) : table_lists =
+    { width = t::width; dead = t::dead; start = t::start; lows = base_list t::lows; next = base_list t::next; accepting = base_list t::accepting }
+
+:~ table_of_lists (l : table_lists) : table =
+    { width = l::width; dead = l::dead; start = l::start; lows = array_of l::lows; next = array_of l::next; accepting = array_of l::accepting }
+
+:~ same_answers (words : list (list u32)) (a : table) (b : table) : bool = answers_agree a b words
+
+:~ same_lists (a : table_lists) (b : table_lists) : bool = a = b
+
+:~ rejecting_everything (l : table_lists) : table =
+    := none = { l ?| accepting = listm::map (\ (_ : bool) => !-) l::accepting }
+    table_of_lists none
+
+:~ law_tables () : list table = listm::map minimal_table [ fourth_from_end (); ends_in_zero (); zero_runs () ]
+
+///> rust
+:# a_table_and_its_emitted_lists_are_declared_an_iso_and_both_round_trips_hold =
+    := words = words_upto 6i32 [ [] ] []
+    := tables = law_tables ()
+    := lists = listm::map lists_of tables
+    (
+        round_trip::laws_hold round_trip::Iso (same_answers words) same_lists lists_of table_of_lists tables lists,
+        round_trip::tight round_trip::Iso (same_answers words) same_lists lists_of table_of_lists tables lists
+    )
+    |> _assert_eq (!+, !+)
+
+///> rust
+:# a_rebuild_that_drops_the_accepting_states_breaks_the_declared_laws =
+    := words = words_upto 6i32 [ [] ] []
+    := tables = law_tables ()
+    round_trip::laws_hold round_trip::Iso (same_answers words) same_lists lists_of rejecting_everything tables (listm::map lists_of tables)
+    |> _assert_eq !-

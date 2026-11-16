@@ -6,14 +6,15 @@
 :< regex_table
 :< regex_certificate
 :< partial
-:< agreement
+:< rx_facts
+:< rx_conformance
 :< workloads
 :< rx_external
 :< rx_crate
 :< regex_language
 :< semantics
-:< lazy
-:< table_emit
+:< rx_lazy
+:< rx_emit
 :< sm'_operators
 :< host
 
@@ -27,6 +28,8 @@
         texts : list string
         table : table
         arrays : list (array_base u32)
+        dense : dense
+        bytes : list (array_base u8)
         workload : workload
         salt : u32
         n : u32
@@ -36,6 +39,11 @@
 :~ ^ arrays_of (words : list (list u32)) : list (array_base u32) =
     ?= words ?|
     | w :: rest => array_of_codes w :: arrays_of rest
+    | [] => []
+
+:~ ^ bytes_of (words : list (list u32)) : list (array_base u8) =
+    ?= words ?|
+    | w :: rest => array_of_bytes w :: bytes_of rest
     | [] => []
 
 :~ prepare (salt : u32) (n : u32) (w : workload) : prepared =
@@ -51,6 +59,8 @@
         texts = texts_of words
         table = table_of c
         arrays = arrays_of words
+        dense = dense_of_table (table_of c)
+        bytes = bytes_of words
         workload = w
         salt = salt
         n = n
@@ -63,7 +73,9 @@
     | MinimalArm
     | MinimalAgainArm
     | RegexCrateArm
+    | AutomataArm
     | TableArm
+    | DenseArm
     | BacktrackingArm
     | LazyArm
     | LazyStoreArm
@@ -76,16 +88,12 @@
     | MinimalArm => run_unchecked p::quotient w
     | MinimalAgainArm => run_unchecked p::quotient w
     | RegexCrateArm => run_unchecked p::quotient w
+    | AutomataArm => run_unchecked p::quotient w
     | TableArm => run_unchecked p::quotient w
+    | DenseArm => run_unchecked p::quotient w
     | BacktrackingArm => run_unchecked p::quotient w
-    | LazyArm =>
-        := v, _ = run_lazy p::regex w
-        v
-    | LazyStoreArm =>
-        := s, start = store_of p::regex 65536i32
-        ?= run_in s start w ?|
-        | Answered v => v
-        | Overflowed => Rejected
+    | LazyArm => run_unchecked p::quotient w
+    | LazyStoreArm => run_unchecked p::quotient w
 
 :~ ^ accepted (a : arm) (p : prepared) (words : list (list u32)) (n : i32) : i32 =
     ?= words ?|
@@ -99,27 +107,15 @@
     | a :: rest => table_accepted p rest (? table_run p::table a = Accepted ?> n + 1i32 |: n)
     | [] => n
 
-:~ ^ lazy_accepted (e : engine) (start : node) (words : list (list u32)) (c : cache) (n : i32) : i32 =
-    ?= words ?|
-    | w :: rest =>
-        := v, c = run_from_node e start w c
-        lazy_accepted e start rest c (? v = Accepted ?> n + 1i32 |: n)
-    | [] => n
-
-:~ ^ store_accepted (s : store) (start : i32) (words : list (list u32)) (n : i32) : i32 =
-    ?= words ?|
-    | w :: rest => store_accepted s start rest (? run_in s start w = Answered Accepted ?> n + 1i32 |: n)
+:~ ^ dense_accepted (p : prepared) (bytes : list (array_base u8)) (n : i32) : i32 =
+    ?= bytes ?|
+    | b :: rest => dense_accepted p rest (? dense_matches p::dense b ?> n + 1i32 |: n)
     | [] => n
 
 := one_pass (a : arm) (p : prepared) : i32 =
     ?= a ?|
-    | LazyArm =>
-        := e, start, c = lazy_of p::regex
-        lazy_accepted e start p::words c 0i32
-    | LazyStoreArm =>
-        := s, start = store_of p::regex 65536i32
-        store_accepted s start p::words 0i32
     | TableArm => table_accepted p p::arrays 0i32
+    | DenseArm => dense_accepted p p::bytes 0i32
     | _ => accepted a p p::words 0i32
 
 :~ ^ passes (a : arm) (p : prepared) (left : i32) (count : i32) : i32 =
@@ -127,13 +123,16 @@
 
 :~ external_sample (a : arm) (p : prepared) : sample =
     := nanos, count =
-        ? a = RegexCrateArm
-        ?> crate_nanos (crate_pattern p::workload, p::texts)
-        |: external_nanos (index_of_workload p::workload, p::words)
+        ?= a ?|
+        | RegexCrateArm => crate_nanos (crate_pattern p::workload, p::texts)
+        | AutomataArm => automata_nanos (crate_pattern p::workload, p::texts)
+        | LazyArm => lazy_nanos (index_of_workload p::workload, 0i32, p::salt, p::n)
+        | LazyStoreArm => lazy_nanos (index_of_workload p::workload, 1i32, p::salt, p::n)
+        | _ => external_nanos (index_of_workload p::workload, p::words)
     { arm = a; nanos = nanos; count = count }
 
 :~ timed (a : arm) (p : prepared) : sample =
-    ? a = RegexCrateArm || a = BacktrackingArm ?> external_sample a p |:
+    ? a = RegexCrateArm || a = AutomataArm || a = BacktrackingArm || a = LazyArm || a = LazyStoreArm ?> external_sample a p |:
     := before = date_time.monotonic_nanoseconds ()
     := count = passes a p 25i32 0i32
     { arm = a; nanos = date_time.monotonic_nanoseconds () - before; count = count }
@@ -159,14 +158,16 @@
         MinimalArm
         MinimalAgainArm
         RegexCrateArm
+        AutomataArm
         TableArm
+        DenseArm
         BacktrackingArm
         LazyArm
         LazyStoreArm
     ]
 
 :~ ^ rounds (p : prepared) (k : i32) (n : i32) (acc : list (list sample)) : list (list sample) =
-    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 10i32) (all_arms ())) p [] :: acc)
+    ? k >= n ?> acc |: rounds p (k + 1i32) n (run_arms (rotated (k % 12i32) (all_arms ())) p [] :: acc)
 
 :~ ^ sample_of (a : arm) (samples : list sample) : sample =
     ?= samples ?|
@@ -207,7 +208,9 @@
     | MinimalArm => "minimal DFA (baseline A)"
     | MinimalAgainArm => "minimal DFA again (A/A)"
     | RegexCrateArm => "Rust regex crate 1.x (oracle and baseline B)"
+    | AutomataArm => "regex-automata 0.4 dense DFA (same anchored pattern)"
     | TableArm => "minimal DFA as an array table"
+    | DenseArm => "minimal DFA as a dense byte table (byte classes, premultiplied states)"
     | BacktrackingArm => "textbook backtracking (continuations, greedy star)"
     | LazyArm => "lazy DFA (interned nodes, memoized steps)"
     | LazyStoreArm => "lazy DFA, array store (node x class table)"
@@ -231,60 +234,10 @@
 
 :== report = { html : markup::markup; failures : i32 }
 
-:= size_text (s : size) : string =
-    ?= s ?|
-    | States n => sm'::obj_to_string n ++# " states"
-    | Refused n => "refused at " ++# sm'::obj_to_string n
-
-:| certification =
-    | Checked : check
-    | TooLarge : i32
-
-:= certification_of (m : dfa) : certification =
-    := n = state_count m
-    ? n <= 128i32 ?> Checked (check_minimality m (certify m)) |: TooLarge n
-
-:= check_ok (c : check) : bool =
-    ?= c ?|
-    | Certified _ => !+
-    | _ => !-
-
-:= certification_ok (c : certification) : bool =
-    ?= c ?|
-    | Checked k => check_ok k
-    | TooLarge _ => !+
-:= check_text (c : check) : string =
-    ?= c ?|
-    | Certified n => "certified, " ++# sm'::obj_to_string n ++# " pairs"
-    | Forged _ => "FORGED"
-    | Uncertified _ => "NOT MINIMAL"
-
-:= agreement_text (a : agreement) : string =
-    ?= a ?|
-    | Agree n => "agree on " ++# sm'::obj_to_string n ++# " words"
-    | Disagree _ => "DISAGREE"
-
-:= certification_text (c : certification) : string =
-    ?= c ?|
-    | Checked k => check_text k
-    | TooLarge n => "certificate skipped at " ++# sm'::obj_to_string n ++# " states"
-
-:= deterministic_ok (w : workload) (p : prepared) (c : certification) (a : agreement) : bool =
-    := minimal_ok = (minimal_size p::eager = expected_minimal w)
-    := certified = certification_ok c
-    := agreed = ?= a ?| Agree _ => !+ | _ => !-
-    minimal_ok && certified && agreed
-
-:== facts = { name : string; prepared : prepared; certification : certification; agreement : agreement; ok : bool }
+:== facts = { name : string; line : string; ok : bool }
 
 := facts_head (f : facts) : markup::markup =
-    := sizes =
-        size_text (size_of f::prepared::eager)
-        ++# " built, "
-        ++# size_text (minimal_size f::prepared::eager)
-        ++# " minimal"
-    := checks = "; " ++# certification_text f::certification ++# "; " ++# agreement_text f::agreement
-    := line = sizes ++# checks ++# (? f::ok ?> "" |: "; MISMATCH")
+    := line = f::line ++# (? f::ok ?> "" |: "; MISMATCH")
     markup::joined (markup::element "h2" [] (markup::escape f::name)) (markup::element "p" [] (markup::escape line))
 
 := time_table (aa : time_verdict) (all : list (list sample)) : markup::markup =
@@ -322,10 +275,9 @@
     markup::element "p" [] (markup::escape (build ++# pass))
 
 :~ facts_of (salt : u32) (w : workload) (p : prepared) (all : list (list sample)) : facts =
-    := c = certification_of p::quotient
-    := a = agreement_on salt 40u32 p::regex
-    := ok = deterministic_ok w p c a && counts_agree all (accepted MinimalArm p p::words 0i32)
-    { name = workload_name w; prepared = p; certification = c; agreement = a; ok = ok }
+    := line, verdict = facts_of_index (index_of_workload w, salt)
+    := ok = (verdict = 1i32) && counts_agree all (accepted MinimalArm p p::words 0i32)
+    { name = workload_name w; line = line; ok = ok }
 
 :~ workload_report (salt : u32) (w : workload) : report =
     := p = prepare salt 400u32 w
@@ -349,31 +301,18 @@
         ^^ "(Instant)"
     markup::element "p" [] (markup::escape (runner ++# method))
 
-:~ ^ module_text (lines : list string) : string =
-    ?= lines ?|
-    | [] => ""
-    | [ last ] => last
-    | line :: rest => line ++# "\n\n" ++# module_text rest
-
-:= staged_header () : string =
-    "///- --package . --timeout 900000\n:# staged_tables static =\n    :< testing\n\n:< regex_table\n:< table_emit\n\n"
-
-:~ staged_lines (k : i32) (w : workload) : list string = table_lines ("s" ++# sm'::show k ++# "_") (minimal_table (workload_regex w))
-
-:~ staged_all () : list string =
-    := small = listm::append (staged_lines 1i32 EndsInZero) (listm::append (staged_lines 2i32 ZeroRuns) (staged_lines 3i32 FourthFromEnd))
-    listm::append small (listm::append (staged_lines 4i32 CountedLetters) (staged_lines 5i32 EighthFromEnd))
-
-:~ emit_staged () : i32 =
-    print_line (staged_header () ++# module_text (staged_all ()))
+:~ emit_precomputed () : i32 =
+    print_line (precomputed_text 5i32)
     0i32
 
 :~ run_bench () : i32 =
     := ~salt = 20261101u32
     := ws = [ EndsInZero; ZeroRuns; FourthFromEnd; CountedLetters; FourthFromEndLong; EighthFromEnd ]
     := r = all_reports salt ws { html = markup::trusted ""; failures = 0i32 }
-    := body = markup::concat [ markup::element "h1" [] (markup::escape "regex benchmarks"); stamp (); r::html ]
+    := conformance = markup::trusted (conformance_html 64i32)
+    := body =
+        markup::concat [ markup::element "h1" [] (markup::escape "regex benchmarks"); stamp (); r::html; conformance ]
     markup::document "regex benchmarks" (markup::trusted "") body |> markup::markup_text |> print_line
     r::failures
 
-:= main () : i32 = ? env_text "REGEX_EMIT_STAGED" <> "" ?> emit_staged () |: run_bench ()
+:= main () : i32 = ? env_text "REGEX_EMIT_PRECOMPUTED" <> "" ?> emit_precomputed () |: run_bench ()

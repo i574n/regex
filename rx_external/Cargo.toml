@@ -1,0 +1,16 @@
+[package]
+name = "rx_external"
+version = "0.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+
+[package.metadata.spiral]
+entry = "rx_external.spi"
+output = "rx_external.rs"
+
+[lib]
+name = "rx_external"
+path = "rx_external.rs"
+
+[dependencies]
+rx_external_parts = { path = "rx_external_parts" }

@@ -1,11 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["bench", "units/rx_external", "units/rx_crate"]
+members = ["bench", "rx_external", "rx_crate", "ssv_video", "rx_lazy", "rx_emit", "rx_facts", "rx_conformance"]
 
 [workspace.dependencies]
 regex = "1.10"
-rx_external = { path = "units/rx_external" }
-rx_crate = { path = "units/rx_crate" }
+regex-automata = "0.4"
+rx_external = { path = "rx_external" }
+rx_crate = { path = "rx_crate" }
+rx_lazy = { path = "rx_lazy" }
+rx_emit = { path = "rx_emit" }
+rx_facts = { path = "rx_facts" }
+rx_conformance = { path = "rx_conformance" }
 
 [profile.release]
 codegen-units = 16

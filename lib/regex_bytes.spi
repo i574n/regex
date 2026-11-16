@@ -1,0 +1,108 @@
+///- --package .
+:< regex_charset
+:< regex_utf8
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
+:< regex_dfa
+
+:# regex_bytes static =
+    :< testing
+
+:~ byte_set (r : byte_range) : re = set (of_ranges [ range r::low r::high ])
+
+:~ ^ seq_of (s : sequence) : re =
+    ?= s ?|
+    | r :: [] => byte_set r
+    | r :: rest => seq (byte_set r) (seq_of rest)
+    | [] => Epsilon
+
+:~ ^ alt_of (seqs : list sequence) (acc : re) : re =
+    ?= seqs ?|
+    | s :: rest => alt_of rest (alt acc (seq_of s))
+    | [] => acc
+
+:~ ^ ranges_bytes (ranges : list code_range) (acc : re) : re =
+    ?= ranges ?|
+    | r :: rest => ranges_bytes rest (alt_of (utf8_sequences r::low r::high) acc)
+    | [] => acc
+
+:= set_bytes (s : char_set normal) : re = ranges_bytes (ranges_of s) Nothing
+
+:= any_char_bytes () : re = set_bytes (everything ())
+
+:~ ^ to_bytes (r : re) : re =
+    ?= r ?|
+    | Nothing => Nothing
+    | Epsilon => Epsilon
+    | Set s => set_bytes s
+    | Seq (a, b) => seq (to_bytes a) (to_bytes b)
+    | Alt (a, b) => alt (to_bytes a) (to_bytes b)
+    | And (a, b) => both (to_bytes a) (to_bytes b)
+    | Not x => both (negate (to_bytes x)) (star (any_char_bytes ()))
+    | Star x => star (to_bytes x)
+    | Repeat (x, low, up) => repeat (to_bytes x) low up
+
+:~ ^ encode_into (codes : list u32) (acc : list u32) : list u32 =
+    ?= codes ?|
+    | c :: rest => encode_into rest (listm::append acc (encode c))
+    | [] => acc
+
+:= utf8_word (codes : list u32) : list u32 = encode_into codes []
+
+:~ mixed_alphabet () : list u32 = [ 65u32; 233u32; 955u32; 8364u32; 128512u32 ]
+
+:~ ^ extend (alphabet : list u32) (words : list (list u32)) : list (list u32) =
+    ?= words ?|
+    | w :: rest => listm::append (listm::map (\ (c : u32) => c :: w) alphabet) (extend alphabet rest)
+    | [] => []
+
+:~ ^ words_up_to (alphabet : list u32) (n : i32) (layer : list (list u32)) (acc : list (list u32)) : list (list u32) =
+    ? n < 0i32 ?> acc |: words_up_to alphabet (n - 1i32) (extend alphabet layer) (listm::append acc layer)
+
+:= mixed_words () : list (list u32) = words_up_to (mixed_alphabet ()) 3i32 [ [] ] []
+
+:~ ^ byte_misses (r : re) (b : re) (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => byte_misses r b rest (? matches r w = matches b (utf8_word w) ?> n |: n + 1i32)
+    | [] => n
+
+:= misses_on_mixed_words (r : re) : i32 = byte_misses r (to_bytes r) (mixed_words ()) 0i32
+
+:= greek () : re = set (of_ranges [ range 880u32 1023u32 ])
+
+:= utf8_patterns () : list re =
+    [
+        seq (greek ()) (star (any_code ()))
+        negate (code 233u32)
+        seq (star (any_code ())) (code 8364u32)
+        repeat (any_code ()) 2u32 (Bounded 2u32)
+        star (alt (code 65u32) (code 128512u32))
+        both (star (any_code ())) (negate (seq (star (any_code ())) (code 955u32)))
+    ]
+
+:= refused_size (s : size) : bool =
+    ?= s ?|
+    | Refused _ => !+
+    | States _ => !-
+
+///> rust
+:# the_byte_regex_matches_the_utf8_encoding_exactly_when_the_code_point_regex_matches =
+    listm::map misses_on_mixed_words (utf8_patterns ()) |> _assert_eq [ 0i32; 0i32; 0i32; 0i32; 0i32; 0i32 ]
+
+///> rust
+:# a_byte_regex_counts_characters_not_bytes =
+    := ~r = repeat (any_code ()) 2u32 (Bounded 2u32)
+    (matches (to_bytes r) (utf8_word [ 128512u32; 233u32 ]), matches (to_bytes r) (utf8_word [ 128512u32 ]))
+    |> _assert_eq (Accepted, Rejected)
+
+///> rust
+:# a_byte_complement_rejects_invalid_utf8 =
+    := ~b = to_bytes (negate (code 233u32))
+    (matches b [ 255u32 ], matches b [ 195u32 ], matches b (utf8_word [ 65u32 ]))
+    |> _assert_eq (Rejected, Rejected, Accepted)
+
+///> rust
+:# every_byte_regex_builds_a_dfa_under_the_cap =
+    listm::map (\ (r : re) => refused_size (size_of (build (to_bytes r)))) (utf8_patterns ())
+    |> _assert_eq [ !-; !-; !-; !-; !-; !- ]

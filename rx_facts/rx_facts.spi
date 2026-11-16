@@ -1,0 +1,60 @@
+:< regex_dfa
+:< regex_minimal
+:< regex_certificate
+:< agreement
+:< workloads
+:< sm'_operators
+
+:= size_text (s : size) : string =
+    ?= s ?|
+    | States n => sm'::obj_to_string n ++# " states"
+    | Refused n => "refused at " ++# sm'::obj_to_string n
+
+:| certification =
+    | Checked : check
+    | TooLarge : i32
+
+:= certification_of (m : dfa) : certification =
+    := n = state_count m
+    ? n <= 128i32 ?> Checked (check_minimality m (certify m)) |: TooLarge n
+
+:= check_ok (c : check) : bool =
+    ?= c ?|
+    | Certified _ => !+
+    | _ => !-
+
+:= certification_ok (c : certification) : bool =
+    ?= c ?|
+    | Checked k => check_ok k
+    | TooLarge _ => !+
+
+:= check_text (c : check) : string =
+    ?= c ?|
+    | Certified n => "certified, " ++# sm'::obj_to_string n ++# " pairs"
+    | Forged _ => "FORGED"
+    | Uncertified _ => "NOT MINIMAL"
+
+:= agreement_text (a : agreement) : string =
+    ?= a ?|
+    | Agree n => "agree on " ++# sm'::obj_to_string n ++# " words"
+    | Disagree _ => "DISAGREE"
+
+:= certification_text (c : certification) : string =
+    ?= c ?|
+    | Checked k => check_text k
+    | TooLarge n => "certificate skipped at " ++# sm'::obj_to_string n ++# " states"
+
+:= facts_of_index ((i, salt) : i32 * u32) : string * i32 =
+    := w = workload_of_index i
+    := r = workload_regex w
+    := eager = build r
+    := c = certification_of (automaton_dfa (certified_of r))
+    := a = agreement_on salt 40u32 r
+    := agreed = ?= a ?| Agree _ => !+ | _ => !-
+    := ok = (minimal_size eager = expected_minimal w) && certification_ok c && agreed
+    := sizes = size_text (size_of eager) ++# " built, " ++# size_text (minimal_size eager) ++# " minimal"
+    sizes ++# "; " ++# certification_text c ++# "; " ++# agreement_text a, (? ok ?> 1i32 |: 0i32)
+
+:= main () : i32 =
+    export "rx_facts_of_index" facts_of_index
+    0i32

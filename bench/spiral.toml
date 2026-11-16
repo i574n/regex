@@ -1,6 +1,6 @@
 packageDir = '../deps/spiral/lib'
-packages = ['|core-', 'spiral-', '../src-', '../units/rx_external-', '../units/rx_crate-']
-link = ['../units/rx_external-', '../units/rx_crate-']
+packages = ['|core-', 'spiral-', '../lib-', '../src-', '../rx_external-', '../rx_crate-', '../rx_lazy-', '../rx_emit-', '../rx_facts-', '../rx_conformance-']
+link = ['../rx_external-', '../rx_crate-', '../rx_lazy-', '../rx_emit-', '../rx_facts-', '../rx_conformance-']
 modules = '''
 host
 bench

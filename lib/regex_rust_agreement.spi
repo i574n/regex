@@ -1,0 +1,89 @@
+///- --package . --timeout 900000
+:< regex_derivative
+:< regex_rust
+:< sm'_operators
+
+:# regex_rust_agreement static =
+    :< testing
+
+:~ crate_finds (pattern : string) (text : string) : bool =
+    $'regex::Regex::new(&*!pattern).map(|r| r.is_match(&*!text)).unwrap_or(false)' : bool
+
+:~ crate_accepts (pattern : string) : bool = $'regex::Regex::new(&*!pattern).is_ok()' : bool
+
+:~ text_of_code (c : u32) : string =
+    $'std::rc::Rc::<str>::from(char::from_u32(!c).unwrap_or(char::REPLACEMENT_CHARACTER).to_string())' : string
+
+:~ pieces () : list string =
+    [ "a"; "b"; "c"; "d"; "k"; "K"; "x"; "z"; "0"; "7"; " "; "\n"; "_"; "-"; "." ]
+    ++ ([ 945u32; 1632u32; 8490u32; 233u32; 12288u32 ] |> listm::map text_of_code)
+
+:~ next_seed (s : u64) : u64 = (s * 1664525u64 + 1013904223u64) % 4294967296u64
+
+:~ ^ nth_piece (ps : list string) (k : u64) : string =
+    ?= ps ?|
+    | p :: rest => ? k = 0u64 ?> p |: nth_piece rest (k - 1u64)
+    | [] => ""
+
+:~ ^ text_from (ps : list string) (count : u64) (s : u64) (left : u64) (acc : string) : string * u64 =
+    ? left = 0u64
+    ?> acc, s
+    |:
+        := s = next_seed s
+        text_from ps count s (left - 1u64) (acc ++# nth_piece ps ((s / 65536u64) % count))
+
+:~ ^ corpus_from (ps : list string) (count : u64) (s : u64) (left : i32) (acc : list string) : list string =
+    ? left <= 0i32
+    ?> listm::rev acc
+    |:
+        := s = next_seed s
+        := text, s = text_from ps count s ((s / 65536u64) % 7u64) ""
+        corpus_from ps count s (left - 1i32) (text :: acc)
+
+:~ corpus (seed : u64) (size : i32) : list string =
+    := ps = pieces ()
+    corpus_from ps (conv (listm::length ps : i32)) seed size []
+
+:~ agreement_patterns () : list string =
+    [
+        "abc"; "^ab|cd$"; "(?i)k"; "^[a-z&&[^aeiou]]+$"; "(?m)^b$"; "a{2,3}"; "\\d+"; "\\w+\\s\\w"; "(?s)a.c"; "a.c"
+        "[[:alpha:]]+[0-9]"; "(?x) a b # note\n c"; "x*y?z+"; "^(a|bc)*d$"; "[^a-c]x"; "\\x41|\\x{3b1}"; "(?-u)\\w+$"
+        "^\\W"; "(?i)[k-m]{2}"; "\\D\\s\\D"; "\\p{Greek}+"; "\\pL\\PL"; "[\\p{Lu}\\d]"; "\\P{N}\\p{gc=Nd}"
+        "\\bk\\b"; "\\b\\d"; "a\\b"; "k.\\b\\d"; "\\w\\b\\W"
+        "k(?:\\b|$)"; "\\d(?:[^0-9]|$)"; "a\\n^b|c"; "(k\\n^x)?\\d"
+    ]
+
+:~ verdict_bool (v : verdict) : bool = ?= v ?| Accepted => !+ | Rejected => !-
+
+:~ check_text (p : string) ((wrong, n) : list (string * string) * i32) (t : string) : list (string * string) * i32 =
+    ? verdict_bool (rust_finds p t) = crate_finds p t ?> (wrong, n + 1i32) |: ((p, t) :: wrong, n + 1i32)
+
+:~ check_pattern (texts : list string) (acc : list (string * string) * i32) (p : string)
+    : list (string * string) * i32
+    =
+    texts |> listm::fold (check_text p) acc
+
+:~ disagreements (patterns : list string) (texts : list string) : list (string * string) * i32 =
+    patterns |> listm::fold (check_pattern texts) ([], 0i32)
+
+:~ parses_here (p : string) : bool =
+    ?= rust_refusal_of p ?|
+    | None => crate_accepts p
+    | Some _ => !-
+
+:~ first_three (xs : list string) : list string =
+    ?= xs ?|
+    | a :: b :: c :: _ => [ a; b; c ]
+    | _ => xs
+
+///> rust -d regex=1
+:# every_accepted_pattern_agrees_with_the_regex_crate_on_a_seeded_corpus =
+    := ~seed = 20261113u64
+    := patterns = agreement_patterns ()
+    := texts = corpus seed 240i32
+    := unparsed = patterns |> listm::fold (\ (acc : list string) (p : string) => ? parses_here p ?> acc |: p :: acc) []
+    := wrong, checked = disagreements patterns texts
+    := first_wrong =
+        wrong |> listm::fold (\ (acc : list string) ((p, _) : string * string) => p :: acc) [] |> first_three
+    (unparsed, first_wrong, (listm::length wrong : i32), checked)
+    |> _assert_eq ([], [], 0i32, 7920i32)

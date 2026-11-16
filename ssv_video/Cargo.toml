@@ -1,0 +1,17 @@
+[package]
+name = "regex-ssv-video"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+repository = "https://github.com/i574n/regex"
+
+[package.metadata.spiral]
+entry = "ssv_video.spi"
+output = "ssv_video.rs"
+
+[[bin]]
+name = "regex-ssv-video"
+path = "ssv_video.rs"
+
+[dependencies]
+ssv_video_parts = { path = "ssv_video_parts" }

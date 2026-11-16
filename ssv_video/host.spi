@@ -1,0 +1,5 @@
+:= env_text (name : string) : string = $'std::rc::Rc::<str>::from(std::env::var(&*!name).unwrap_or_default())' : string
+
+:= env_i32 (name : string) (fallback : i32) : i32 = $'std::env::var(&*!name).ok().and_then(|v| v.trim().parse::<i32>().ok()).unwrap_or(!fallback)' : i32
+
+:~ print_line (text : string) : () = console.write_line text

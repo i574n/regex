@@ -1,0 +1,1006 @@
+///- --package . --timeout 900000
+:< regex_charset
+:< regex_syntax
+:< regex_nullable
+:< regex_derivative
+:< regex_unicode_tables
+:< regex_unicode_properties
+
+:# regex_rust static =
+    :< testing
+
+:== rust_flags = { fold : bool; dot_all : bool; multi : bool; uni : bool; verbose : bool }
+
+:~ default_flags () : rust_flags = { fold = !-; dot_all = !-; multi = !-; uni = !+; verbose = !- }
+
+:| rust_refusal =
+    | GroupUnclosed
+    | ClassUnclosed
+    | CloseWithoutOpen
+    | RepeatOfNothing
+    | RepeatStacked
+    | CountInvalid
+    | LookaroundUnsupported
+    | BackreferenceUnsupported
+    | WordBoundaryUnsupported
+    | AnchorInside
+    | UnicodeTableMissing
+    | CaseFoldBeyondAscii
+    | EscapeUnknown
+    | FlagUnknown
+    | HexInvalid
+
+:| rust_parsed =
+    | RustParsed : re
+    | RustRefused : rust_refusal
+
+:| rust_step =
+    | Got : re * list u32 * rust_flags
+    | Stopped : rust_refusal
+
+:| class_step =
+    | ClassGot : char_set normal * list u32
+    | ClassStopped : rust_refusal
+
+:| escaped =
+    | EscChar : u32 * list u32
+    | EscSet : char_set normal * list u32
+    | EscStopped : rust_refusal
+
+:| pin =
+    | Unpinned
+    | PinnedText
+    | PinnedLine
+    | WordEdge
+    | GluedTo : re
+
+:| anchor =
+    | StartAnchor : pin * list u32
+    | EndAnchor : pin * list u32
+    | WordAnchor : list u32
+    | NoAnchor
+
+:~ ^ rust_codes (s : string) : list u32 = codes_to_u32 (unicode::code_points s)
+:& :~ codes_to_u32 (xs : list i32) : list u32 =
+    ?= xs ?|
+    | x :: rest => conv x :: codes_to_u32 rest
+    | [] => []
+
+:~ heads (c : u32) (codes : list u32) : bool =
+    ?= codes ?|
+    | x :: _ => x = c
+    | [] => !-
+
+:~ after_one (codes : list u32) : list u32 =
+    ?= codes ?|
+    | _ :: rest => rest
+    | [] => []
+
+:~ is_space_code (c : u32) : bool = (9u32 <= c && c <= 13u32) || c = 32u32
+
+:~ ^ skip_comment (codes : list u32) : list u32 =
+    ?= codes ?|
+    | c :: rest => ? c = 10u32 ?> rest |: skip_comment rest
+    | [] => []
+
+:~ ^ skip_verbose (codes : list u32) : list u32 =
+    ?= codes ?|
+    | c :: rest => ? is_space_code c ?> skip_verbose rest |? c = 35u32 ?> skip_verbose (skip_comment rest) |: codes
+    | [] => []
+
+:~ skip_space (f : rust_flags) (codes : list u32) : list u32 = ? f.verbose ?> skip_verbose codes |: codes
+
+:~ nothing_set () : char_set normal = of_ranges []
+
+:~ ascii_upper () : char_set normal = of_ranges [ range 65u32 90u32 ]
+
+:~ ascii_word () : char_set normal =
+    of_ranges [ range 48u32 57u32; range 65u32 90u32; range 97u32 122u32; range 95u32 95u32 ]
+
+:~ ascii_space () : char_set normal = of_ranges [ range 9u32 13u32; range 32u32 32u32 ]
+
+:~ unicode_space () : char_set normal =
+    of_ranges
+        [
+            range 9u32 13u32
+            range 32u32 32u32
+            range 133u32 133u32
+            range 160u32 160u32
+            range 5760u32 5760u32
+            range 8192u32 8202u32
+            range 8232u32 8233u32
+            range 8239u32 8239u32
+            range 8287u32 8287u32
+            range 12288u32 12288u32
+        ]
+
+:~ beyond_ascii () : char_set normal = of_ranges [ range 128u32 (last_code_point ()) ]
+
+:~ shifted (s : char_set normal) (up : bool) : char_set normal =
+    := moved = \ (r : code_range) =>
+        ? up ?> range (r.low - 32u32) (r.high - 32u32) |: range (r.low + 32u32) (r.high + 32u32)
+    ranges_of s |> listm::map moved |> of_ranges
+
+:~ folded (f : rust_flags) (s : char_set normal) : char_set normal =
+    := uppers = shifted (intersection s (lower ())) !+
+    := lowers = shifted (intersection s (ascii_upper ())) !-
+    := cased = set_union s (set_union uppers lowers)
+    := kelvin = ? f.uni && contains 107u32 cased ?> single 8490u32 |: nothing_set ()
+    := long_s = ? f.uni && contains 115u32 cased ?> single 383u32 |: nothing_set ()
+    set_union cased (set_union kelvin long_s)
+
+:~ fold_class (f : rust_flags) (s : char_set normal) (rest : list u32) : class_step =
+    ? f.fold |> not
+    ?> ClassGot (s, rest)
+    |? is_empty (intersection s (beyond_ascii ()))
+    ?> ClassGot (folded f s, rest)
+    |: ClassStopped CaseFoldBeyondAscii
+
+:~ class_to_step (f : rust_flags) (s : class_step) : rust_step =
+    ?= s ?|
+    | ClassGot (found, rest) => Got (set found, rest, f)
+    | ClassStopped why => Stopped why
+
+:~ perl_set (f : rust_flags) (ascii : char_set normal) (wide : char_set normal) (negated : bool) (rest : list u32)
+    : escaped
+    =
+    := base = ? f.uni ?> wide |: ascii
+    EscSet ((? negated ?> complement base |: base), rest)
+
+:~ space_set (f : rust_flags) (negated : bool) (rest : list u32) : escaped =
+    := base = ? f.uni ?> unicode_space () |: ascii_space ()
+    EscSet ((? negated ?> complement base |: base), rest)
+
+:~ hex_digit (c : u32) : i32 =
+    ? 48u32 <= c && c <= 57u32
+    ?> conv (c - 48u32)
+    |? 97u32 <= c && c <= 102u32
+    ?> conv (c - 87u32)
+    |? 65u32 <= c && c <= 70u32
+    ?> conv (c - 55u32)
+    |: -1i32
+
+:~ scalar_or_refused (value : u32) (rest : list u32) : escaped =
+    ? value > last_code_point () || (55296u32 <= value && value <= 57343u32)
+    ?> EscStopped HexInvalid
+    |: EscChar (value, rest)
+
+:~ ^ hex_fixed (codes : list u32) (left : i32) (acc : u32) : escaped =
+    ? left <= 0i32
+    ?> scalar_or_refused acc codes
+    |:
+        ?= codes ?|
+        | c :: rest =>
+            ? hex_digit c < 0i32
+            ?> EscStopped HexInvalid
+            |: hex_fixed rest (left - 1i32) (acc * 16u32 + conv (hex_digit c))
+        | [] => EscStopped HexInvalid
+
+:~ ^ hex_braced (codes : list u32) (count : i32) (acc : u32) : escaped =
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 125u32 && count > 0i32
+        ?> scalar_or_refused acc rest
+        |? hex_digit c < 0i32 || count >= 8i32
+        ?> EscStopped HexInvalid
+        |: hex_braced rest (count + 1i32) (acc * 16u32 + conv (hex_digit c))
+    | [] => EscStopped HexInvalid
+
+:~ hex_escape (width : i32) (rest : list u32) : escaped =
+    ? heads 123u32 rest ?> hex_braced (after_one rest) 0i32 0u32 |: hex_fixed rest width 0u32
+
+:~ control_escape (c : u32) : u32 =
+    ? c = 97u32
+    ?> 7u32
+    |? c = 102u32
+    ?> 12u32
+    |? c = 116u32
+    ?> 9u32
+    |? c = 110u32
+    ?> 10u32
+    |? c = 114u32
+    ?> 13u32
+    |? c = 118u32
+    ?> 11u32
+    |: 0u32
+
+:~ is_ascii_alnum (c : u32) : bool =
+    (48u32 <= c && c <= 57u32) || (65u32 <= c && c <= 90u32) || (97u32 <= c && c <= 122u32)
+
+:~ literal_escape (c : u32) (rest : list u32) : escaped =
+    ? control_escape c > 0u32
+    ?> EscChar (control_escape c, rest)
+    |? c = 60u32 || c = 62u32
+    ?> EscStopped WordBoundaryUnsupported
+    |? c < 128u32 && not (is_ascii_alnum c)
+    ?> EscChar (c, rest)
+    |? 49u32 <= c && c <= 57u32 || c = 107u32
+    ?> EscStopped BackreferenceUnsupported
+    |? c = 98u32 || c = 66u32
+    ?> EscStopped WordBoundaryUnsupported
+    |? c = 112u32 || c = 80u32
+    ?> EscStopped UnicodeTableMissing
+    |: EscStopped EscapeUnknown
+
+:~ hex_or_literal (c : u32) (rest : list u32) : escaped =
+    ? c = 120u32
+    ?> hex_escape 2i32 rest
+    |? c = 117u32
+    ?> hex_escape 4i32 rest
+    |? c = 85u32
+    ?> hex_escape 8i32 rest
+    |: literal_escape c rest
+
+:~ named_property (f : rust_flags) (negated : bool) (name : list u32) (rest : list u32) : escaped =
+    ? f.fold
+    ?> EscStopped CaseFoldBeyondAscii
+    |:
+        ?= property_set name ?|
+        | Some s => EscSet ((? negated ?> complement s |: s), rest)
+        | None => EscStopped UnicodeTableMissing
+
+:~ ^ braced_property (f : rust_flags) (negated : bool) (codes : list u32) (acc : list u32) : escaped =
+    ?= codes ?|
+    | c :: more =>
+        ? c = 125u32 ?> named_property f negated (listm::rev acc) more |: braced_property f negated more (c :: acc)
+    | [] => EscStopped EscapeUnknown
+
+:~ property_escape (f : rust_flags) (negated : bool) (rest : list u32) : escaped =
+    ?= rest ?|
+    | b :: more => ? b = 123u32 ?> braced_property f negated more [] |: named_property f negated [ b ] more
+    | [] => EscStopped EscapeUnknown
+
+:~ escape_code (f : rust_flags) (c : u32) (rest : list u32) : escaped =
+    ? c = 100u32 || c = 68u32
+    ?> perl_set f (digits ()) (unicode_decimal ()) (c = 68u32) rest
+    |? c = 119u32 || c = 87u32
+    ?> perl_set f (ascii_word ()) (unicode_word ()) (c = 87u32) rest
+    |? c = 115u32 || c = 83u32
+    ?> space_set f (c = 83u32) rest
+    |? (c = 112u32 || c = 80u32) && f.uni
+    ?> property_escape f (c = 80u32) rest
+    |: hex_or_literal c rest
+
+:~ escape_after (f : rust_flags) (codes : list u32) : escaped =
+    ?= codes ?|
+    | c :: rest => escape_code f c rest
+    | [] => EscStopped EscapeUnknown
+
+:~ literal_class (f : rust_flags) (c : u32) (rest : list u32) : class_step = fold_class f (single c) rest
+
+:~ escaped_class (f : rust_flags) (e : escaped) : class_step =
+    ?= e ?|
+    | EscChar (c, rest) => literal_class f c rest
+    | EscSet (s, rest) => ClassGot (s, rest)
+    | EscStopped why => ClassStopped why
+
+:~ posix_names () : list (string * list code_range) =
+    [
+        "alnum", [ range 48u32 57u32; range 65u32 90u32; range 97u32 122u32 ]
+        "alpha", [ range 65u32 90u32; range 97u32 122u32 ]
+        "ascii", [ range 0u32 127u32 ]
+        "blank", [ range 9u32 9u32; range 32u32 32u32 ]
+        "cntrl", [ range 0u32 31u32; range 127u32 127u32 ]
+        "digit", [ range 48u32 57u32 ]
+        "graph", [ range 33u32 126u32 ]
+        "lower", [ range 97u32 122u32 ]
+        "print", [ range 32u32 126u32 ]
+        "punct", [ range 33u32 47u32; range 58u32 64u32; range 91u32 96u32; range 123u32 126u32 ]
+        "space", [ range 9u32 13u32; range 32u32 32u32 ]
+        "upper", [ range 65u32 90u32 ]
+        "word", [ range 48u32 57u32; range 65u32 90u32; range 97u32 122u32; range 95u32 95u32 ]
+        "xdigit", [ range 48u32 57u32; range 65u32 70u32; range 97u32 102u32 ]
+    ]
+
+:~ ^ posix_lookup (name : list u32) (table : list (string * list code_range)) : option (char_set normal) =
+    ?= table ?|
+    | (n, ranges) :: rest => ? rust_codes n = name ?> Some (of_ranges ranges) |: posix_lookup name rest
+    | [] => None
+
+:~ ^ posix_name (codes : list u32) (acc : list u32) : option (list u32 * list u32) =
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 58u32 && heads 93u32 rest
+        ?> Some (listm::rev acc, after_one rest)
+        |? 97u32 <= c && c <= 122u32
+        ?> posix_name rest (c :: acc)
+        |: None
+    | [] => None
+
+:~ posix_class (codes : list u32) : option class_step =
+    := negated = heads 94u32 codes
+    := body = ? negated ?> after_one codes |: codes
+    ?= posix_name body [] ?|
+    | Some (name, rest) =>
+        ?= posix_lookup name (posix_names ()) ?|
+        | Some s => Some (ClassGot ((? negated ?> complement s |: s), rest))
+        | None => Some (ClassStopped EscapeUnknown)
+    | None => None
+
+:~ starts_op (codes : list u32) : bool =
+    ?= codes ?|
+    | a :: b :: _ => (a = 38u32 && b = 38u32) || (a = 45u32 && b = 45u32) || (a = 126u32 && b = 126u32)
+    | _ => !-
+
+:~ class_skip (f : rust_flags) (codes : list u32) : list u32 =
+    ?= codes ?|
+    | c :: rest => ? f.verbose && is_space_code c ?> class_skip f rest |: codes
+    | [] => []
+
+:~ range_high (f : rust_flags) (codes : list u32) : option (u32 * list u32) =
+    ?= codes ?|
+    | dash :: h :: rest =>
+        ? dash <> 45u32 || h = 93u32 || h = 45u32 || h = 91u32
+        ?> None
+        |? h = 92u32
+        ?>
+            ?= escape_after f rest ?|
+            | EscChar (c, more) => Some (c, more)
+            | _ => None
+        |: Some (h, rest)
+    | _ => None
+
+:~ ranged (f : rust_flags) (low : u32) (rest : list u32) : class_step =
+    ?= range_high f rest ?|
+    | Some (high, more) =>
+        ? low <= high ?> fold_class f (of_ranges [ range low high ]) more |: ClassStopped CountInvalid
+    | None => literal_class f low rest
+
+:~ escaped_ranged (f : rust_flags) (e : escaped) : class_step =
+    ?= e ?|
+    | EscChar (c, rest) => ranged f c rest
+    | other => escaped_class f other
+
+:~ ^ class_union (f : rust_flags) (codes : list u32) (acc : char_set normal) (first : bool) : class_step =
+    := codes = class_skip f codes
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 93u32 && not first
+        ?> ClassGot (acc, codes)
+        |? starts_op codes
+        ?> ClassGot (acc, codes)
+        |: class_item_then f c rest acc
+    | [] => ClassStopped ClassUnclosed
+
+:& :~ class_item_then (f : rust_flags) (c : u32) (rest : list u32) (acc : char_set normal) : class_step =
+    ?= class_item f c rest ?|
+    | ClassGot (s, more) => class_union f more (set_union acc s) !-
+    | stopped => stopped
+
+:& :~ class_item (f : rust_flags) (c : u32) (rest : list u32) : class_step =
+    ? c = 91u32
+    ?> class_nested f rest
+    |? c = 92u32
+    ?> escaped_ranged f (escape_after f rest)
+    |: ranged f c rest
+
+:& :~ class_nested (f : rust_flags) (rest : list u32) : class_step =
+    ? heads 58u32 rest
+    ?>
+        ?= posix_class (after_one rest) ?|
+        | Some (ClassGot (s, more)) => fold_class f s more
+        | Some stopped => stopped
+        | None => class_open f rest
+    |: class_open f rest
+
+:& :~ class_ops (f : rust_flags) (left : class_step) : class_step =
+    ?= left ?|
+    | ClassGot (acc, codes) =>
+        ?= codes ?|
+        | a :: _ :: more =>
+            ? starts_op codes
+            ?> class_ops f (class_combine a acc (class_union f more (nothing_set ()) !+))
+            |: left
+        | _ => left
+    | stopped => stopped
+
+:& :~ class_combine (op : u32) (acc : char_set normal) (right : class_step) : class_step =
+    ?= right ?|
+    | ClassGot (s, more) =>
+        := combined =
+            ? op = 38u32 ?> intersection acc s |? op = 45u32 ?> minus acc s |: set_union (minus acc s) (minus s acc)
+        ClassGot (combined, more)
+    | stopped => stopped
+
+:& :~ class_open (f : rust_flags) (codes : list u32) : class_step =
+    := negated = heads 94u32 codes
+    := body = ? negated ?> after_one codes |: codes
+    ?= class_ops f (class_union f body (nothing_set ()) !+) ?|
+    | ClassGot (s, rest) =>
+        ? heads 93u32 rest ?> ClassGot ((? negated ?> complement s |: s), after_one rest) |: ClassStopped ClassUnclosed
+    | stopped => stopped
+
+:~ dot (f : rust_flags) : re = ? f.dot_all ?> any_code () |: set (complement (single 10u32))
+
+:~ literal_step (f : rust_flags) (c : u32) (rest : list u32) : rust_step = class_to_step f (literal_class f c rest)
+
+:~ escape_step (f : rust_flags) (e : escaped) : rust_step =
+    ?= e ?|
+    | EscChar (c, rest) => literal_step f c rest
+    | EscSet (s, rest) => Got (set s, rest, f)
+    | EscStopped why => Stopped why
+
+:~ is_quantifier (c : u32) : bool = c = 63u32 || c = 42u32 || c = 43u32 || c = 123u32
+
+:| count_number =
+    | CountNumber : u32 * list u32
+    | NoCountNumber
+
+:~ ^ count_digits (codes : list u32) (acc : u32) (seen : bool) : count_number =
+    ?= codes ?|
+    | c :: rest =>
+        ? 48u32 <= c && c <= 57u32 && acc < 100000u32
+        ?> count_digits rest (acc * 10u32 + c - 48u32) !+
+        |: ? seen ?> CountNumber (acc, codes) |: NoCountNumber
+    | [] => ? seen ?> CountNumber (acc, []) |: NoCountNumber
+
+:~ lazy_and_lone (f : rust_flags) (r : re) (codes : list u32) : rust_step =
+    := rest = skip_space f (? heads 63u32 codes ?> after_one codes |: codes)
+    ?= rest ?|
+    | c :: _ => ? is_quantifier c ?> Stopped RepeatStacked |: Got (r, rest, f)
+    | [] => Got (r, [], f)
+
+:~ count_close (f : rust_flags) (r : re) (low : u32) (high : upper) (codes : list u32) : rust_step =
+    := ok = ?= high ?| Bounded h => low <= h | Unbounded => !+
+    ? heads 125u32 codes && ok ?> lazy_and_lone f (repeat r low high) (after_one codes) |: Stopped CountInvalid
+
+:~ count_upper (f : rust_flags) (r : re) (low : u32) (codes : list u32) : rust_step =
+    ? heads 125u32 codes
+    ?> count_close f r low (Bounded low) codes
+    |? heads 44u32 codes
+    ?>
+        := more = after_one codes
+        ? heads 125u32 more
+        ?> count_close f r low Unbounded more
+        |:
+            ?= count_digits more 0u32 !- ?|
+            | CountNumber (high, rest) => count_close f r low (Bounded high) rest
+            | NoCountNumber => Stopped CountInvalid
+    |: Stopped CountInvalid
+
+:~ rust_counted (f : rust_flags) (r : re) (codes : list u32) : rust_step =
+    ?= count_digits codes 0u32 !- ?|
+    | CountNumber (low, rest) => count_upper f r low rest
+    | NoCountNumber => Stopped CountInvalid
+
+:~ rust_quantify (f : rust_flags) (r : re) (codes : list u32) : rust_step =
+    := codes = skip_space f codes
+    ?= codes ?|
+    | c :: more =>
+        ? c = 63u32
+        ?> lazy_and_lone f (optional r) more
+        |? c = 42u32
+        ?> lazy_and_lone f (star r) more
+        |? c = 43u32
+        ?> lazy_and_lone f (plus r) more
+        |? c = 123u32
+        ?> rust_counted f r more
+        |: Got (r, codes, f)
+    | [] => Got (r, [], f)
+
+:~ anchor_of (f : rust_flags) (codes : list u32) : anchor =
+    := line = ? f.multi ?> PinnedLine |: PinnedText
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 94u32
+        ?> StartAnchor (line, rest)
+        |? c = 36u32
+        ?> EndAnchor (line, rest)
+        |? c = 92u32 && heads 65u32 rest
+        ?> StartAnchor (PinnedText, after_one rest)
+        |? c = 92u32 && heads 122u32 rest
+        ?> EndAnchor (PinnedText, after_one rest)
+        |? c = 92u32 && heads 98u32 rest
+        ?> WordAnchor (after_one rest)
+        |: NoAnchor
+    | [] => NoAnchor
+
+:~ any_run () : re = star (any_code ())
+
+:~ left_pad (p : pin) : re =
+    ?= p ?|
+    | Unpinned => any_run ()
+    | PinnedText => Epsilon
+    | PinnedLine => alt Epsilon (seq (any_run ()) (code 10u32))
+    | WordEdge => Epsilon
+    | GluedTo prefix => prefix
+
+:~ right_pad (p : pin) : re =
+    ?= p ?|
+    | Unpinned => any_run ()
+    | PinnedText => Epsilon
+    | PinnedLine => alt Epsilon (seq (code 10u32) (any_run ()))
+    | WordEdge => Epsilon
+    | GluedTo _ => Epsilon
+
+:~ is_glued (p : pin) : bool =
+    ?= p ?|
+    | GluedTo _ => !+
+    | _ => !-
+
+:~ glueable (why : rust_refusal) : bool =
+    ?= why ?|
+    | AnchorInside => !+
+    | WordBoundaryUnsupported => !+
+    | _ => !-
+
+:~ glued_body (codes : list u32) : option (list u32) =
+    := rest = after_one codes
+    ? heads 63u32 rest
+    ?> (? heads 58u32 (after_one rest) ?> Some (after_one (after_one rest)) |: None)
+    |: Some rest
+
+:~ is_word_edge (p : pin) : bool =
+    ?= p ?|
+    | WordEdge => !+
+    | _ => !-
+
+:~ is_unpinned (p : pin) : bool =
+    ?= p ?|
+    | Unpinned => !+
+    | _ => !-
+
+:~ is_text_pin (p : pin) : bool =
+    ?= p ?|
+    | PinnedText => !+
+    | _ => !-
+
+:~ word_set (f : rust_flags) : char_set normal = ? f.uni ?> unicode_word () |: ascii_word ()
+
+:~ word_left (word : char_set normal) (r : re) : re =
+    := w = set word
+    := nw = set (complement word)
+    := after_non_word = seq (alt Epsilon (seq (any_run ()) nw)) (both r (seq w (any_run ())))
+    := after_word = seq (seq (any_run ()) w) (both r (seq nw (any_run ())))
+    alt after_non_word after_word
+
+:~ word_between (word : char_set normal) (prefix : re) (suffix : re) : re =
+    := w = set word
+    := nw = set (complement word)
+    := ends_word = seq (any_run ()) w
+    := ends_other = alt Epsilon (seq (any_run ()) nw)
+    := starts_word = seq w (any_run ())
+    := starts_other = alt Epsilon (seq nw (any_run ()))
+    := word_then_other = seq (both prefix ends_word) (both suffix starts_other)
+    alt word_then_other (seq (both prefix ends_other) (both suffix starts_word))
+
+:~ word_right (word : char_set normal) (r : re) : re =
+    := w = set word
+    := nw = set (complement word)
+    := before_non_word = seq (both r (seq (any_run ()) w)) (alt Epsilon (seq nw (any_run ())))
+    := before_word = seq (both r (seq (any_run ()) nw)) (seq w (any_run ()))
+    alt before_non_word before_word
+
+:~ rust_ends_branch (codes : list u32) : bool =
+    ?= codes ?|
+    | c :: _ => c = 124u32 || c = 41u32
+    | [] => !+
+
+:| flag_scan =
+    | FlagsSet : rust_flags * list u32
+    | FlagsScoped : rust_flags * list u32
+    | FlagsBad
+    | NotFlags
+
+:~ flag_set (f : rust_flags) (c : u32) (on : bool) : option rust_flags =
+    ? c = 105u32
+    ?> Some { f with fold = on }
+    |? c = 109u32
+    ?> Some { f with multi = on }
+    |? c = 115u32
+    ?> Some { f with dot_all = on }
+    |? c = 117u32
+    ?> Some { f with uni = on }
+    |? c = 120u32
+    ?> Some { f with verbose = on }
+    |? c = 85u32
+    ?> Some f
+    |: None
+
+:~ ^ scan_flags (f : rust_flags) (on : bool) (seen : bool) (codes : list u32) : flag_scan =
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 41u32
+        ?> ? seen ?> FlagsSet (f, rest) |: FlagsBad
+        |? c = 58u32
+        ?> FlagsScoped (f, rest)
+        |? c = 45u32
+        ?> ? on ?> scan_flags f !- seen rest |: FlagsBad
+        |:
+            ?= flag_set f c on ?|
+            | Some next => scan_flags next on !+ rest
+            | None => FlagsBad
+    | [] => FlagsBad
+
+:~ is_flag_start (c : u32) : bool =
+    c = 105u32 || c = 109u32 || c = 115u32 || c = 117u32 || c = 120u32 || c = 85u32 || c = 45u32
+
+:~ flags_at (f : rust_flags) (codes : list u32) : flag_scan =
+    ?= codes ?|
+    | paren :: q :: c :: _ =>
+        ? paren = 40u32 && q = 63u32 && is_flag_start c ?> scan_flags f !+ !- (after_one (after_one codes)) |: NotFlags
+    | _ => NotFlags
+
+:~ ^ skip_name (codes : list u32) : option (list u32) =
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 62u32
+        ?> Some rest
+        |? is_ascii_alnum c || c = 95u32 || c = 46u32 || c = 91u32 || c = 93u32
+        ?> skip_name rest
+        |: None
+    | [] => None
+
+:~ ^ rust_alternation (codes : list u32) (f : rust_flags) (top : bool) : rust_step =
+    rust_after_branch top (rust_branch codes f top Unpinned Epsilon !-)
+
+:& :~ rust_after_branch (top : bool) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (left, rest, f) => ? heads 124u32 rest ?> rust_join left (rust_alternation (after_one rest) f top) |: s
+    | stopped => stopped
+
+:& :~ rust_join (left : re) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (right, rest, f) => Got (alt left right, rest, f)
+    | stopped => stopped
+
+:& :~ rust_branch (codes : list u32) (f : rust_flags) (top : bool) (left : pin) (acc : re) (consumed : bool)
+    : rust_step
+    =
+    := codes = skip_space f codes
+    ? rust_ends_branch codes
+    ?> rust_close f top left Unpinned acc codes
+    |:
+        ?= anchor_of f codes ?|
+        | StartAnchor (p, rest) =>
+            ? is_unpinned left && top && not consumed
+            ?> rust_branch rest f top p acc consumed
+            |? consumed && not (nullable acc) && is_text_pin p
+            ?> rust_branch rest f top left Nothing !+
+            |: Stopped AnchorInside
+        | EndAnchor (p, rest) =>
+            := after = skip_space f rest
+            ? top && rust_ends_branch after ?> rust_close f top left p acc after |: Stopped AnchorInside
+        | WordAnchor rest =>
+            := after = skip_space f rest
+            ? top && not consumed && is_unpinned left && not (rust_ends_branch after)
+            ?> rust_branch rest f top WordEdge acc consumed
+            |? top && consumed && rust_ends_branch after
+            ?> rust_close f top left WordEdge acc after
+            |? top && ((consumed && not (nullable acc)) || (is_glued left && not consumed))
+            ?> rust_mid_boundary f left acc (rust_branch rest f top PinnedText Epsilon !-)
+            |: Stopped WordBoundaryUnsupported
+        | NoAnchor => rust_branch_flags codes f top left acc consumed
+
+:& :~ rust_mid_boundary (f : rust_flags) (left : pin) (acc : re) (suffix : rust_step) : rust_step =
+    ?= suffix ?|
+    | Got (after, rest, g) =>
+        := word = word_set f
+        := prefix = ? is_word_edge left ?> word_left word acc |: seq (left_pad left) acc
+        Got (word_between word prefix after, rest, g)
+    | stopped => stopped
+
+:& :~ rust_branch_flags (codes : list u32) (f : rust_flags) (top : bool) (left : pin) (acc : re) (consumed : bool)
+    : rust_step
+    =
+    ?= flags_at f codes ?|
+    | FlagsSet (next, rest) => rust_branch rest next top left acc consumed
+    | FlagsScoped (inner, rest) =>
+        rust_branch_piece top left acc (rust_quantified (rust_group f (rust_alternation rest inner !-)))
+    | FlagsBad => Stopped FlagUnknown
+    | NotFlags => rust_branch_atom codes f top left acc
+
+:& :~ rust_branch_atom (codes : list u32) (f : rust_flags) (top : bool) (left : pin) (acc : re) : rust_step =
+    := piece = rust_quantified (rust_atom codes f)
+    ?= piece ?|
+    | Stopped why => ? top && heads 40u32 codes && glueable why ?> rust_glued_group codes f left acc why |: piece
+    | _ => rust_branch_piece top left acc piece
+
+:& :~ rust_glued_group (codes : list u32) (f : rust_flags) (left : pin) (acc : re) (why : rust_refusal)
+    : rust_step
+    =
+    ?= glued_body codes ?|
+    | None => Stopped why
+    | Some inner =>
+        ? is_word_edge left && nullable acc
+        ?> Stopped why
+        |:
+            := word = word_set f
+            := prefix = ? is_word_edge left ?> word_left word acc |: seq (left_pad left) acc
+            rust_glued_close f why (rust_glued_alternation inner f prefix)
+
+:& :~ rust_glued_close (f : rust_flags) (why : rust_refusal) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (whole, rest, _) =>
+        := after = skip_space f (after_one rest)
+        ? heads 41u32 rest && rust_ends_branch after ?> Got (whole, after, f) |: Stopped why
+    | stopped => stopped
+
+:& :~ rust_glued_alternation (codes : list u32) (f : rust_flags) (prefix : re) : rust_step =
+    rust_glued_after prefix (rust_branch codes f !+ (GluedTo prefix) Epsilon !-)
+
+:& :~ rust_glued_after (prefix : re) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (left, rest, f) =>
+        ? heads 124u32 rest ?> rust_join left (rust_glued_alternation (after_one rest) f prefix) |: s
+    | stopped => stopped
+
+:& :~ rust_branch_piece (top : bool) (left : pin) (acc : re) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (r, rest, f) => rust_branch rest f top left (seq acc r) !+
+    | stopped => stopped
+
+:& :~ rust_finish (f : rust_flags) (top : bool) (left : pin) (right : pin) (acc : re) : re =
+    ? not top
+    ?> acc
+    |:
+        := word = word_set f
+        := right_done = ? is_word_edge right ?> word_right word acc |: seq acc (right_pad right)
+        ? is_word_edge left ?> word_left word right_done |: seq (left_pad left) right_done
+
+:& :~ rust_close (f : rust_flags) (top : bool) (left : pin) (right : pin) (acc : re) (rest : list u32) : rust_step =
+    ? (is_word_edge left || is_word_edge right) && nullable acc
+    ?> Stopped WordBoundaryUnsupported
+    |: Got (rust_finish f top left right acc, rest, f)
+
+:& :~ rust_quantified (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (r, rest, f) => rust_quantify f r rest
+    | stopped => stopped
+
+:& :~ rust_group (outer : rust_flags) (s : rust_step) : rust_step =
+    ?= s ?|
+    | Got (r, rest, _) => ? heads 41u32 rest ?> Got (r, after_one rest, outer) |: Stopped GroupUnclosed
+    | stopped => stopped
+
+:& :~ rust_open (codes : list u32) (f : rust_flags) : rust_step =
+    ?= codes ?|
+    | q :: rest =>
+        ? q <> 63u32
+        ?> rust_group f (rust_alternation codes f !-)
+        |? heads 58u32 rest
+        ?> rust_group f (rust_alternation (after_one rest) f !-)
+        |? heads 61u32 rest || heads 33u32 rest
+        ?> Stopped LookaroundUnsupported
+        |? heads 80u32 rest && heads 60u32 (after_one rest)
+        ?> rust_named (after_one (after_one rest)) f
+        |? heads 80u32 rest && heads 61u32 (after_one rest)
+        ?> Stopped BackreferenceUnsupported
+        |? heads 60u32 rest
+        ?> rust_angle (after_one rest) f
+        |: Stopped FlagUnknown
+    | [] => Stopped GroupUnclosed
+
+:& :~ rust_angle (codes : list u32) (f : rust_flags) : rust_step =
+    ? heads 61u32 codes || heads 33u32 codes ?> Stopped LookaroundUnsupported |: rust_named codes f
+
+:& :~ rust_named (codes : list u32) (f : rust_flags) : rust_step =
+    ?= skip_name codes ?|
+    | Some rest => rust_group f (rust_alternation rest f !-)
+    | None => Stopped GroupUnclosed
+
+:& :~ rust_atom (codes : list u32) (f : rust_flags) : rust_step =
+    ?= codes ?|
+    | c :: rest =>
+        ? c = 40u32
+        ?> rust_open rest f
+        |? c = 91u32
+        ?> class_to_step f (class_open f rest)
+        |? c = 92u32
+        ?> escape_step f (escape_after f rest)
+        |? c = 46u32
+        ?> Got (dot f, rest, f)
+        |? is_quantifier c
+        ?> Stopped RepeatOfNothing
+        |: literal_step f c rest
+    | [] => Stopped RepeatOfNothing
+
+:~ rust_parsed_of (s : rust_step) : rust_parsed =
+    ?= s ?|
+    | Got (r, rest, _) => ? heads 41u32 rest ?> RustRefused CloseWithoutOpen |: RustParsed r
+    | Stopped why => RustRefused why
+
+:~ parse_rust (pattern : string) : rust_parsed =
+    rust_parsed_of (rust_alternation (rust_codes pattern) (default_flags ()) !+)
+
+:~ rust_finds (pattern : string) (text : string) : verdict =
+    ?= parse_rust pattern ?|
+    | RustParsed r => matches r (rust_codes text)
+    | RustRefused _ => Rejected
+
+:~ rust_refusal_of (pattern : string) : option rust_refusal =
+    ?= parse_rust pattern ?|
+    | RustParsed _ => None
+    | RustRefused why => Some why
+
+:~ finds_each (pattern : string) (texts : list string) : list verdict = texts |> listm::map (rust_finds pattern)
+
+:~ finds_codes (pattern : string) (texts : list (list u32)) : list verdict =
+    ?= parse_rust pattern ?|
+    | RustParsed r => texts |> listm::map (matches r)
+    | RustRefused _ => texts |> listm::map (\ _ => Rejected)
+
+///> rust
+///> gleam
+:# an_unanchored_pattern_is_found_anywhere_and_anchors_pin_the_ends =
+    (
+        finds_each "abc" [ "xxabcxx"; "ab" ],
+        finds_each "^ab$" [ "ab"; "abz"; "zab" ],
+        finds_each "^ab|cd$" [ "abz"; "zcd"; "zab" ]
+    )
+    |> _assert_eq ([ Accepted; Rejected ], [ Accepted; Rejected; Rejected ], [ Accepted; Accepted; Rejected ])
+
+///> rust
+///> gleam
+:# multi_line_anchors_match_at_line_breaks_and_dot_stops_at_newline =
+    (finds_each "(?m)^b$" [ "a\nb\nc"; "abc" ], finds_each "a.c" [ "abc"; "a\nc" ], finds_each "(?s)a.c" [ "a\nc" ])
+    |> _assert_eq ([ Accepted; Rejected ], [ Accepted; Rejected ], [ Accepted ])
+
+///> rust
+///> gleam
+:# case_folding_follows_simple_unicode_folding_for_ascii_letters =
+    (
+        finds_codes "(?i)k" [ [ 75u32 ]; [ 8490u32 ]; [ 120u32 ] ],
+        finds_codes "(?-u:(?i)k)" [ [ 8490u32 ] ],
+        finds_each "a(?i:b)c" [ "aBc"; "aBC" ]
+    )
+    |> _assert_eq ([ Accepted; Accepted; Rejected ], [ Rejected ], [ Accepted; Rejected ])
+
+///> rust
+///> gleam
+:# classes_nest_and_combine_left_to_right =
+    (
+        finds_each "^[a-z&&[^aeiou]]+$" [ "xyz"; "xaz" ],
+        finds_each "^[[:digit:]x-]+$" [ "1x-2"; "1y" ],
+        finds_each "^[a-c--b]$" [ "a"; "b" ]
+    )
+    |> _assert_eq ([ Accepted; Rejected ], [ Accepted; Rejected ], [ Accepted; Rejected ])
+
+///> rust
+///> gleam
+:# counts_lazy_marks_hex_escapes_and_verbose_mode_parse =
+    (
+        finds_each "^a{2,3}$" [ "a"; "aa"; "aaaa" ],
+        finds_each "^a+?$" [ "aaa" ],
+        finds_each "^\\x41\\u{42}$" [ "AB" ],
+        finds_each "(?x)^ a b # note\n c $" [ "abc" ]
+    )
+    |> _assert_eq ([ Rejected; Accepted; Rejected ], [ Accepted ], [ Accepted ], [ Accepted ])
+
+///> rust
+///> gleam
+:# word_boundaries_in_top_level_branches_are_exact_and_grouped_or_after_empty_ones_are_refused =
+    (
+        finds_each "\\bfoo\\b" [ "a foo b"; "afoo"; "foo"; "foobar"; "foo." ],
+        finds_each "\\b\\d+" [ "x 42"; "x42" ],
+        finds_each "o\\b" [ "foo bar"; "fooo" ],
+        finds_each "x.{0,3}\\b(ab)\\b" [ "x ab"; "xab"; "x-ab." ],
+        finds_each "a\\bb" [ "ab"; "a b" ],
+        (rust_refusal_of "\\b", rust_refusal_of "a*\\bb", rust_refusal_of "(\\bx)y")
+    )
+    |> _assert_eq
+        (
+            [ Accepted; Rejected; Accepted; Rejected; Accepted ],
+            [ Accepted; Rejected ],
+            [ Accepted; Accepted ],
+            [ Accepted; Rejected; Accepted ],
+            [ Rejected; Rejected ],
+            (Some WordBoundaryUnsupported, Some WordBoundaryUnsupported, Some WordBoundaryUnsupported)
+        )
+
+///> rust
+///> gleam
+:# a_trailing_group_with_an_end_anchor_or_boundary_alternative_is_exact =
+    (
+        finds_each "x(?:[^a]|$)" [ "xb"; "xa"; "x"; "zxa" ],
+        finds_each "ab(?:\\b|$)" [ "ab c"; "abc"; "ab" ],
+        rust_refusal_of "x(?:a|$)b"
+    )
+    |> _assert_eq ([ Accepted; Rejected; Accepted; Rejected ], [ Accepted; Rejected; Accepted ], Some AnchorInside)
+
+///> rust
+///> gleam
+:# what_cannot_be_exact_yet_is_refused_with_its_reason =
+    [ "(?=a)"; "(a)\\1"; "a*\\bb"; "a(^b)"; "\\p{Klingon}"; "a**"; "*a"; "(a"; "a)"; "[a" ]
+    ++ [ "(?i)\\x{e9}"; "\\q"; "(?z)"; "\\x{110000}"; "\\p{scx=Greek}" ]
+    |> listm::map rust_refusal_of
+    |> _assert_eq
+        [
+            Some LookaroundUnsupported
+            Some BackreferenceUnsupported
+            Some WordBoundaryUnsupported
+            Some AnchorInside
+            Some UnicodeTableMissing
+            Some RepeatStacked
+            Some RepeatOfNothing
+            Some GroupUnclosed
+            Some CloseWithoutOpen
+            Some ClassUnclosed
+            Some CaseFoldBeyondAscii
+            Some EscapeUnknown
+            Some FlagUnknown
+            Some HexInvalid
+            Some UnicodeTableMissing
+        ]
+
+///> rust
+///> gleam
+:# ascii_perl_classes_parse_once_unicode_mode_is_off =
+    (finds_each "(?-u)^\\d+\\s\\w$" [ "12 x"; "12x" ], rust_refusal_of "(?-u)\\D", finds_codes "^\\s$" [ [ 12288u32 ] ])
+    |> _assert_eq ([ Accepted; Rejected ], None, [ Accepted ])
+
+///> rust
+///> gleam
+:# unicode_perl_classes_use_the_regex_syntax_tables =
+    (
+        finds_codes "^\\d$" [ [ 1632u32 ]; [ 65u32 ] ],
+        finds_codes "^\\w$" [ [ 170u32 ]; [ 917760u32 ]; [ 8192u32 ] ],
+        finds_codes "^\\D$" [ [ 1632u32 ]; [ 65u32 ] ]
+    )
+    |> _assert_eq ([ Accepted; Rejected ], [ Accepted; Accepted; Rejected ], [ Rejected; Accepted ])
+
+///> rust
+///> gleam
+:# unicode_properties_resolve_by_category_and_script_with_negation =
+    (
+        finds_codes "^\\p{Greek}+$" [ [ 945u32; 946u32 ]; [ 97u32 ] ],
+        finds_codes "^\\pL\\PL$" [ [ 233u32; 49u32 ]; [ 49u32; 233u32 ] ],
+        finds_codes "^[\\p{Lu}\\d]$" [ [ 65u32 ]; [ 97u32 ]; [ 1632u32 ] ],
+        finds_codes "^\\P{N}$" [ [ 120u32 ]; [ 55u32 ] ],
+        finds_codes "^\\p{Script=Han}$" [ [ 19968u32 ]; [ 12354u32 ] ],
+        (rust_refusal_of "(?i)\\p{Lu}", rust_refusal_of "(?-u)\\pL", rust_refusal_of "\\p{^N}")
+    )
+    |> _assert_eq
+        (
+            [ Accepted; Rejected ],
+            [ Accepted; Rejected ],
+            [ Accepted; Rejected; Accepted ],
+            [ Accepted; Rejected ],
+            [ Accepted; Rejected ],
+            (Some CaseFoldBeyondAscii, Some UnicodeTableMissing, Some UnicodeTableMissing)
+        )
+
+:~ rebar_curated_inline () : list string =
+    [
+        ".*[^A-Z]|[A-Z]"
+        "[A-Za-z]{10}\\s+[\\s\\S]{0,100}Result[\\s\\S]{0,100}\\s+[A-Za-z]{10}"
+        "Sherlock Holmes|John Watson|Irene Adler|Inspector Lestrade|Professor Moriarty"
+        "Sherlock Holmes"
+        ".*.*=.*"
+        "(\\s*)((?:# [Nn][Oo][Qq][Aa])(?::\\s?(([A-Z]+[0-9]+(?:[,\\s]+)?)+))?)"
+        "(?:[A-Z][a-z]+\\s*){10,100}"
+        "((?:ASIA|AKIA|AROA|AIDA)([A-Z0-7]{16}))"
+        "(('|\")((?:ASIA|AKIA|AROA|AIDA)([A-Z0-7]{16}))('|\").*?(\\n^.*?){0,4}(('|\")[a-zA-Z0-9+/]{40}('|\"))+"
+            ^^ "|('|\")[a-zA-Z0-9+/]{40}('|\").*?(\\n^.*?){0,3}('|\")((?:ASIA|AKIA|AROA|AIDA)([A-Z0-7]{16}))('|\"))+"
+        "\\p{L}{8,13}"
+        "\\b\\w{12,}\\b"
+        "\\b\\w+\\b"
+        "\\b[0-9A-Za-z_]{12,}\\b"
+        "\\b[0-9A-Za-z_]+\\b"
+        "[A-Za-z]{8,13}"
+        "(?:# [Nn][Oo][Qq][Aa])(?::\\s?(([A-Z]+[0-9]+(?:[,\\s]+)?)+))?"
+        "(?:(?:\"|'|\\]|\\}|\\\\|\\d|(?:nan|infinity|true|false|null|undefined|symbol|math)|`|-|\\+)+[)]*;?"
+            ^^ "((?:\\s|-|~|!|\\{\\}|\\|\\||\\+)*.*(?:.*=.*)))"
+    ]
+
+:~ refused_patterns (patterns : list string) : list string =
+    := keep = \ (acc : list string) (p : string) => ?= rust_refusal_of p ?| Some _ => p :: acc | None => acc
+    patterns |> listm::fold keep []
+
+///> rust
+///> gleam
+:# rebar_curated_inline_patterns_are_all_accepted =
+    := patterns = rebar_curated_inline ()
+    := reasons = refused_patterns patterns |> listm::map rust_refusal_of
+    (listm::length patterns : i32, reasons) |> _assert_eq (17i32, [])
+
+///> rust
+///> gleam
+:# a_start_anchor_after_text_that_cannot_be_empty_makes_its_branch_dead_outside_multi_line =
+    (
+        finds_each "a\\n^b|c" [ "a\nb"; "c"; "b" ],
+        finds_each "(x\\n^y)?z" [ "z"; "x\nyz" ],
+        rust_refusal_of "(?m)a\\n^b",
+        rust_refusal_of "(a*^b)"
+    )
+    |> _assert_eq ([ Rejected; Accepted; Rejected ], [ Accepted; Accepted ], Some AnchorInside, Some AnchorInside)

@@ -7,14 +7,7 @@ $ErrorActionPreference = "Stop"
 . deps/spiral/scripts/core.ps1
 . deps/spiral/lib/spiral/lib.ps1
 
-$libModules = @(Get-ChildItem src, bench, staged -Filter *.spi | Select-String -Pattern '^:< (regex_\w+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique)
-$libNotebooks = foreach ($m in $libModules) {
-    $p = Join-Path $ScriptDir 'deps' 'spiral' 'lib' 'spiral' "$m.spi"
-    if (-not (Test-Path -LiteralPath $p)) { throw "build.ps1 / regex opens lib module $m but $p does not exist" }
-    '--path'; (Resolve-Path -LiteralPath $p).Path
-}
-Write-Output "build.ps1 / lib regex modules gated here: $($libModules -join ' ')"
-$notebooks = @(Get-ChildItem src -Filter *.spi | ForEach-Object { '--path'; $_.FullName }) + @('--path', (Join-Path $ScriptDir 'staged' 'staged_check.spi')) + @($libNotebooks)
+$notebooks = @(Get-ChildItem lib, src -Filter *.spi | ForEach-Object { '--path'; $_.FullName }) + @('--path', (Join-Path $ScriptDir 'precomputed' 'precomputed_check.spi'))
 $env:SPIRAL_CELLS_MEMO = '0'
 $cellsStarted = Get-Date
 Push-Location ($env:SPIRAL_CELLS_ROOT ? $env:SPIRAL_CELLS_ROOT : (Join-Path 'deps' 'spiral' 'apps' 'cells'))
@@ -30,15 +23,49 @@ if ($IsWindows -and ($cells -match 'compiler socket failed')) {
 if ($cellsExit -ne 0) { throw "build.ps1 / Spiral test cells exited $cellsExit" }
 if (!($cells -match '^spiral-tests total')) { throw "build.ps1 / Spiral test cells printed no spiral-tests total line" }
 
-if (!(BuildSpiral units/rx_crate/rx_crate.spi units/rx_crate/rx_crate.rs "regex/rx_crate")) {
+if (!(BuildSpiral rx_crate/rx_crate.spi rx_crate/rx_crate.rs "regex/rx_crate")) {
     throw "RUST-FAILED regex/rx_crate / compile"
 }
-if (!(BuildSpiral units/rx_external/rx_external.spi units/rx_external/rx_external.rs "regex/rx_external")) {
+if (!(BuildSpiral rx_lazy/rx_lazy.spi rx_lazy/rx_lazy.rs "regex/rx_lazy")) {
+    throw "RUST-FAILED regex/rx_lazy / compile"
+}
+if (!(BuildSpiral rx_emit/rx_emit.spi rx_emit/rx_emit.rs "regex/rx_emit")) {
+    throw "RUST-FAILED regex/rx_emit / compile"
+}
+if (!(BuildSpiral rx_facts/rx_facts.spi rx_facts/rx_facts.rs "regex/rx_facts")) {
+    throw "RUST-FAILED regex/rx_facts / compile"
+}
+if (!(BuildSpiral rx_conformance/rx_conformance.spi rx_conformance/rx_conformance.rs "regex/rx_conformance")) {
+    throw "RUST-FAILED regex/rx_conformance / compile"
+}
+if (!(BuildSpiral rx_external/rx_external.spi rx_external/rx_external.rs "regex/rx_external")) {
     throw "RUST-FAILED regex/rx_external / compile"
+}
+if (!(BuildSpiral ssv_video/ssv_video.spi ssv_video/ssv_video.rs "regex/ssv_video")) {
+    throw "RUST-FAILED regex/ssv_video / compile"
 }
 if (!(BuildSpiral bench/bench.spi bench/bench.rs "regex/bench")) {
     throw "RUST-FAILED regex/bench / compile"
 }
+$spiral = Ensure-SpiralCompiler | Select-Object -Last 1
+foreach ($crate in 'rx_crate', 'rx_lazy', 'rx_emit', 'rx_facts', 'rx_conformance', 'rx_external', 'ssv_video', 'bench') {
+    & $spiral.Dotnet $spiral.Compiler partition-rust (Join-Path $ScriptDir $crate "$crate.rs") --limit 1000
+    if ($LASTEXITCODE -ne 0) { throw "RUST-FAILED regex/$crate / partition-rust exited $LASTEXITCODE" }
+}
+$denseBodies = @(Get-ChildItem bench -Filter *.rs -Recurse | Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' } | ForEach-Object {
+        $lines = @(Get-Content $_.FullName)
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^pub fn (dense_full|dense_step)_\d+') {
+                $name = $Matches[0] -replace '^pub fn ', ''
+                $end = $i + 1
+                while ($end -lt $lines.Count -and $lines[$end] -ne '}') { $end++ }
+                [pscustomobject]@{ Name = $name; Body = ($lines[($i + 1)..$end] -join "`n") }
+            }
+        } })
+if ($denseBodies.Count -lt 2) { throw "build.ps1 / dense census: found $($denseBodies.Count) of the dense_full and dense_step bodies in the generated bench crate" }
+$denseFaults = @($denseBodies | Where-Object { $_.Body -match '\.clone\(\)|Rc::new|wrapping_mul' } | ForEach-Object Name)
+if ($denseFaults) { throw "build.ps1 / dense census: the dense matcher loop clones, allocates an Rc or multiplies per step in $($denseFaults -join ', ')" }
+Write-Output "build.ps1 / dense census / $($denseBodies.Count) generated bodies, no clone, no Rc::new, no per-step multiply"
 { cargo build --release } | Invoke-Block
 $cargoTarget = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).target_directory
 if (!$cargoTarget) { throw "RUST-FAILED regex / cargo metadata found no target directory" }
@@ -49,21 +76,21 @@ $benchExit = $LASTEXITCODE
 if ($benchExit -ne 0) { throw "build.ps1 / regex-bench exited ${benchExit}: a deterministic row or an arm count disagrees (bench/report.html)" }
 Write-Output "build.ps1 / bench / bench/report.html"
 
-$env:REGEX_EMIT_STAGED = '1'
-$staged = @(& (Join-Path $cargoTarget 'release' "regex-bench$(_exe)"))
-$stagedExit = $LASTEXITCODE
-Remove-Item Env:REGEX_EMIT_STAGED
-if ($stagedExit -ne 0) { throw "build.ps1 / regex-bench staged emit exited $stagedExit" }
-$stagedPath = Join-Path $ScriptDir 'staged' 'staged_tables.spi'
-$stagedText = ($staged -join "`n") + "`n"
-$stagedNow = if (Test-Path $stagedPath) { [IO.File]::ReadAllText($stagedPath).Replace("`r`n", "`n") } else { '' }
-if ($stagedNow -ne $stagedText) {
-    [IO.File]::WriteAllText($stagedPath, $stagedText)
-    throw "build.ps1 / staged/staged_tables.spi was stale and is now regenerated from the bench emitter; commit the regenerated file"
+$env:REGEX_EMIT_PRECOMPUTED = '1'
+$precomputed = @(& (Join-Path $cargoTarget 'release' "regex-bench$(_exe)"))
+$precomputedExit = $LASTEXITCODE
+Remove-Item Env:REGEX_EMIT_PRECOMPUTED
+if ($precomputedExit -ne 0) { throw "build.ps1 / regex-bench precomputed emit exited $precomputedExit" }
+$precomputedPath = Join-Path $ScriptDir 'precomputed' 'precomputed_tables.spi'
+$precomputedText = ($precomputed -join "`n") + "`n"
+$precomputedNow = if (Test-Path $precomputedPath) { [IO.File]::ReadAllText($precomputedPath).Replace("`r`n", "`n") } else { '' }
+if ($precomputedNow -ne $precomputedText) {
+    [IO.File]::WriteAllText($precomputedPath, $precomputedText)
+    throw "build.ps1 / precomputed/precomputed_tables.spi was stale and is now regenerated from the bench emitter; commit the regenerated file"
 }
-Write-Output "build.ps1 / staged / staged_tables.spi matches the emitter"
+Write-Output "build.ps1 / precomputed / precomputed_tables.spi matches the emitter"
 
-$generated = @(Get-ChildItem bench, units/rx_external, units/rx_crate -Filter *.rs | ForEach-Object { [pscustomobject]@{ Path = $_.FullName; Lines = @(Get-Content $_.FullName).Count } } | Sort-Object Lines -Descending)
+$generated = @(Get-ChildItem bench, rx_external, rx_crate, ssv_video, rx_lazy, rx_emit, rx_facts, rx_conformance -Filter *.rs -Recurse | Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' } | ForEach-Object { [pscustomobject]@{ Path = $_.FullName; Lines = @(Get-Content $_.FullName).Count } } | Sort-Object Lines -Descending)
 Write-Output "build.ps1 / largest generated file / $($generated[0].Lines) lines / $($generated[0].Path)"
-if ($generated[0].Lines -gt 1000) { Write-Output "::warning::build.ps1 / 1000-line gate OPEN: $($generated[0].Path) has $($generated[0].Lines) lines; bench.rs stays uncommitted until REGEX-BENCH-PAGE splits bench.spi into crates by hand" }
+if ($generated[0].Lines -gt 1000) { throw "build.ps1 / 1000-line gate: $($generated[0].Path) has $($generated[0].Lines) lines after partition-rust (a single generated function over the limit; split it at the Spiral source)" }
 Write-Output "REGEX-OK"

@@ -1,0 +1,7 @@
+packageDir = '../deps/spiral/lib'
+packages = ['|core-', 'spiral-', '../lib-', '../src-']
+modules = '''
+precomputed_tables
+precomputed_check
+precomputed_time
+'''

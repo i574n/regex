@@ -1,0 +1,11 @@
+:! compiled_regex = $'regex::Regex'
+
+:= compile_regex (pattern : string) : compiled_regex = $'regex::Regex::new(&*!pattern).unwrap()' : compiled_regex
+
+:~ regex_is_match (r : compiled_regex) (text : string) : bool = $'!r.is_match(&*!text)' : bool
+
+:! automata_dfa = $'std::rc::Rc<regex_automata::dfa::dense::DFA<Vec<u32>>>'
+
+:= compile_automata (pattern : string) : automata_dfa = $'std::rc::Rc::new(regex_automata::dfa::dense::DFA::new(&*!pattern).unwrap())' : automata_dfa
+
+:~ automata_is_match (d : automata_dfa) (text : string) : bool = $'{ use regex_automata::dfa::Automaton; !d.try_search_fwd(&regex_automata::Input::new(&*!text)).unwrap().is_some() }' : bool

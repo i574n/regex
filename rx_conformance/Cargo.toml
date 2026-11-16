@@ -1,0 +1,16 @@
+[package]
+name = "rx_conformance"
+version = "0.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+
+[package.metadata.spiral]
+entry = "rx_conformance.spi"
+output = "rx_conformance.rs"
+
+[lib]
+name = "rx_conformance"
+path = "rx_conformance.rs"
+
+[dependencies]
+rx_conformance_parts = { path = "rx_conformance_parts" }

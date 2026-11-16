@@ -1,0 +1,38 @@
+///- --package . --timeout 900000
+:# ssv_dispatch static =
+    :< testing
+
+:< ssv_parity
+
+:= side () : i32 = 100
+
+:= point_at (i : i32) : pt = { x = conv (i % side ()) : f32; y = conv (i / side ()) : f32 }
+
+:~ ^ force_over (count : i32) (p : pt) (j : i32) (acc : pt) : pt =
+    ? j < count ?> force_over count p (j + 1) (plus acc (push p (point_at j))) |: acc
+
+:= force_at (count : i32) (i : i32) : pt = force_over count (point_at i) 0 (origin ())
+
+:= lane () : i32 =
+    run_target \|
+        | Wgsl => \ () => conv ($'spiral_lane' : u32)
+        | _ => \ () => 0i32
+
+:= grid_points (count : i32) : sized_array::sized 64 pt = sized_array::init \ i => point_at i
+
+:~ ^ all_forces (count : i32) (i : i32) (acc : f32) : f32 =
+    ? i < count ?> all_forces count (i + 1) (acc + (force_at count i)::x) |: acc
+
+:= points () : i32 = 10000
+
+:= main () : i32 =
+    run_target \|
+        | Wgsl => \ () => conv (convert::bits_of_f32 (force_at (points ()) (lane ()))::x)
+        | _ => \ () => conv (convert::bits_of_f32 (all_forces (points ()) 0 0f32))
+
+///> rust
+///> wgsl
+:# one_point_of_the_dispatch_matches_the_n_point_pass =
+    := ~i = 37i32
+    := want = sized_array::item (repulsion_n (grid_points 64)) i
+    ? same (force_at 64 i) want ?> 0i32 |: 1i32

@@ -15,13 +15,15 @@
     := second = mid q::c q::d
     { a = toward q::a first u; b = toward q::b first u; c = toward q::c second u; d = toward q::d second u }
 
-:= synthetic () : quad = { a = { x = 0f32; y = 0f32 }; b = { x = 2f32; y = 0f32 }; c = { x = 0f32; y = 4f32 }; d = { x = 0f32; y = 6f32 } }
+:= synthetic () : quad =
+    { a = { x = 0f32; y = 0f32 }; b = { x = 2f32; y = 0f32 }; c = { x = 0f32; y = 4f32 }; d = { x = 0f32; y = 6f32 } }
 
 := near (got : f32) (want : f32) : bool = ? got > want ?> got - want <= 0.00001f32 |: want - got <= 0.00001f32
 
 := at (p : pt) (x : f32) (y : f32) : bool = near p::x x && near p::y y
 
-:= halfway_holds (q : quad) : bool = at q::a 0.5f32 0f32 && at q::b 1.5f32 0f32 && at q::c 0f32 4.5f32 && at q::d 0f32 5.5f32
+:= halfway_holds (q : quad) : bool =
+    at q::a 0.5f32 0f32 && at q::b 1.5f32 0f32 && at q::c 0f32 4.5f32 && at q::d 0f32 5.5f32
 
 ///> rust
 ///> wgsl
@@ -35,3 +37,81 @@
     := ~u = 1f32
     := q = merge_pairs (synthetic ()) u
     ? at q::a 1f32 0f32 && at q::b 1f32 0f32 && at q::c 0f32 5f32 && at q::d 0f32 5f32 ?> 0i32 |: 1i32
+
+:= push (p : pt) (q : pt) : pt =
+    := dx = p::x - q::x
+    := dy = p::y - q::y
+    := d2 = dx * dx + dy * dy + 0.000001f32
+    { x = dx / d2; y = dy / d2 }
+
+:= plus (p : pt) (q : pt) : pt = { x = p::x + q::x; y = p::y + q::y }
+
+:= repelled (p : pt) (q : pt) (r : pt) (s : pt) : pt = plus (plus (push p q) (push p r)) (push p s)
+
+:= repulsion (q : quad) : quad =
+    := a = repelled q::a q::b q::c q::d
+    := b = repelled q::b q::a q::c q::d
+    { a = a; b = b; c = repelled q::c q::a q::b q::d; d = repelled q::d q::a q::b q::c }
+
+:= repulsion_holds (r : quad) : bool =
+    at r::a (-0.5f32) (-0.4166667f32)
+    && at r::b 0.65f32 (-0.35f32)
+    && at r::c (-0.1f32) (-0.05f32)
+    && at r::d (-0.05f32) 0.8166667f32
+
+:= balanced (r : quad) : bool =
+    near (r::a::x + r::b::x + r::c::x + r::d::x) 0f32 && near (r::a::y + r::b::y + r::c::y + r::d::y) 0f32
+
+///> rust
+///> wgsl
+:# the_repulsion_pass_agrees_on_cpu_and_gpu =
+    := ~u = 0f32
+    ? repulsion_holds (repulsion (merge_pairs (synthetic ()) u)) ?> 0i32 |: 1i32
+
+///> rust
+///> wgsl
+:# the_repulsion_forces_sum_to_zero =
+    := ~u = 0f32
+    ? balanced (repulsion (merge_pairs (synthetic ()) u)) ?> 0i32 |: 1i32
+
+:= origin () : pt = { x = 0f32; y = 0f32 }
+
+:~ ^ force_from \* n. (ps : sized_array::sized n pt) (p : pt) (j : i32) (acc : pt) : pt =
+    ? j < sized_array::element_count ps
+    ?> force_from ps p (j + 1) (plus acc (push p (sized_array::item ps j)))
+    |: acc
+
+:= repulsion_n \* n. (ps : sized_array::sized n pt) : sized_array::sized n pt =
+    sized_array::init \ i => force_from ps (sized_array::item ps i) 0 (origin ())
+
+:= quad_points (q : quad) : sized_array::sized 4 pt =
+    sized_array::init \ i => ? i = 0 ?> q::a |: ? i = 1 ?> q::b |: ? i = 2 ?> q::c |: q::d
+
+:= same (p : pt) (q : pt) : bool = near p::x q::x && near p::y q::y
+
+:= agrees (r : quad) (v : sized_array::sized 4 pt) : bool =
+    same r::a (sized_array::item v 0) && same r::b (sized_array::item v 1)
+    && same r::c (sized_array::item v 2) && same r::d (sized_array::item v 3)
+
+:= grid () : sized_array::sized 64 pt =
+    sized_array::init \ i => { x = conv (i % 8) : f32; y = conv (i / 8) : f32 }
+
+:~ ^ sum_from (v : sized_array::sized 64 pt) (j : i32) (acc : pt) : pt =
+    ? j < 64 ?> sum_from v (j + 1) (plus acc (sized_array::item v j)) |: acc
+
+:= total (v : sized_array::sized 64 pt) : pt = sum_from v 0 (origin ())
+
+:= small (f : f32) : bool = ? f > 0f32 ?> f <= 0.001f32 |: 0f32 - f <= 0.001f32
+
+///> rust
+///> wgsl
+:# the_n_point_pass_matches_the_quad_pass =
+    := ~u = 0f32
+    := q = merge_pairs (synthetic ()) u
+    ? agrees (repulsion q) (repulsion_n (quad_points q)) ?> 0i32 |: 1i32
+
+///> rust
+///> wgsl
+:# the_n_point_forces_on_a_grid_sum_to_zero =
+    := f = total (repulsion_n (grid ()))
+    ? small f::x && small f::y ?> 0i32 |: 1i32

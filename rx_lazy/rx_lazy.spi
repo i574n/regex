@@ -1,0 +1,42 @@
+:< regex_syntax
+:< regex_derivative
+:< semantics
+:< lazy
+:< workloads
+:< sm'_operators
+
+:~ ^ lazy_accepted (e : engine) (start : node) (words : list (list u32)) (c : cache) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest =>
+        := v, c = run_from_node e start w c
+        lazy_accepted e start rest c (? v = Accepted ?> n + 1i32 |: n)
+    | [] => n
+
+:~ ^ store_accepted (s : store) (start : i32) (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => store_accepted s start rest (? run_in s start w = Answered Accepted ?> n + 1i32 |: n)
+    | [] => n
+
+:~ lazy_pass (mode : i32) (r : re) (words : list (list u32)) : i32 =
+    ? mode = 0i32
+    ?>
+        := e, start, c = lazy_of r
+        lazy_accepted e start words c 0i32
+    |:
+        := s, start = store_of r 65536i32
+        store_accepted s start words 0i32
+
+:~ ^ lazy_passes (mode : i32) (r : re) (words : list (list u32)) (left : i32) (count : i32) : i32 =
+    ? left <= 0i32 ?> count |: lazy_passes mode r words (left - 1i32) (lazy_pass mode r words)
+
+:= lazy_nanos ((i, mode, salt, n) : i32 * i32 * u32 * u32) : u64 * i32 =
+    := w = workload_of_index i
+    := r = workload_regex w
+    := ws = workload_words salt n w r
+    := before = date_time.monotonic_nanoseconds ()
+    := count = lazy_passes mode r ws 25i32 0i32
+    date_time.monotonic_nanoseconds () - before, count
+
+:= main () : i32 =
+    export "rx_lazy_nanos" lazy_nanos
+    0i32

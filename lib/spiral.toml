@@ -1,0 +1,21 @@
+packageDir = '../deps/spiral/lib'
+packages = ['|core-', 'spiral-']
+modules = '''
+regex_charset
+regex_utf8
+regex_syntax
+regex_nullable
+regex_derivative
+regex_dfa
+regex_bytes
+regex_minimal
+regex_language
+regex_certificate
+regex_table
+regex_xsd
+regex_unicode_tables
+regex_unicode_properties
+regex_rust
+regex_rust_agreement
+regex_rust_print
+'''

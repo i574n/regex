@@ -1,0 +1,16 @@
+[package]
+name = "rx_emit"
+version = "0.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+
+[package.metadata.spiral]
+entry = "rx_emit.spi"
+output = "rx_emit.rs"
+
+[lib]
+name = "rx_emit"
+path = "rx_emit.rs"
+
+[dependencies]
+rx_emit_parts = { path = "rx_emit_parts" }

@@ -1,0 +1,187 @@
+///- --package . --timeout 900000
+:# curriculum static =
+    :< testing
+
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< regex_certificate
+:< keyed_rng
+:< agreement
+:< sm'_operators
+
+:| family =
+    | Literal
+    | CharClass
+    | Quantifier
+    | Alternation
+    | Intersection
+    | Complement
+
+:| split =
+    | Train
+    | HeldoutDepth
+    | HeldoutLength
+
+:| curriculum_draw =
+    | PatternPick : u32
+    | InputLength : u32
+    | InputLetter : u32
+
+:+ purpose_code curriculum_draw =
+    \ p =>
+        ?= p ?|
+        | PatternPick i => 3000000u32 + i
+        | InputLength i => 4000000u32 + i
+        | InputLetter i => 5000000u32 + i
+
+:== curriculum_row = { id : u32; split : split; family : family; depth : i32; pattern : re; input : list u32; expected : verdict; agreed : bool }
+
+:= pick (salt : u32) (id : u32) (purpose : curriculum_draw) : u32 = draw (roll_key (seed salt) (tick id) (entity 3u32) purpose)
+
+:= letter_count () : u32 = 4u32
+
+:= atom (salt : u32) (id : u32) (k : u32) : re = code (97u32 + pick salt id (PatternPick k) % letter_count ())
+
+:= class_of (salt : u32) (id : u32) (k : u32) : re =
+    := low = 97u32 + pick salt id (PatternPick (k + 1u32)) % 2u32
+    Set (of_ranges [ range low (low + 1u32 + pick salt id (PatternPick (k + 2u32)) % 2u32) ])
+
+:= anything () : re = star (Set (of_ranges [ range 97u32 (96u32 + letter_count ()) ]))
+
+:~ ^ pattern_of (f : family) (salt : u32) (id : u32) (depth : i32) (k : u32) : re =
+    := sub = \ (j : u32) => pattern_of f salt id (depth - 1i32) (k * 4u32 + j)
+    ? depth <= 0i32 ?> atom salt id k |:
+        ?= f ?|
+        | Literal => seq (sub 1u32) (sub 2u32)
+        | CharClass => seq (class_of salt id k) (sub 1u32)
+        | Quantifier =>
+            := low = pick salt id (PatternPick (k + 3u32)) % 2u32
+            ? pick salt id (PatternPick k) % 2u32 = 0u32 ?> star (sub 1u32) |: repeat (sub 1u32) low (Bounded (low + 2u32))
+        | Alternation => alt (sub 1u32) (sub 2u32)
+        | Intersection => both (seq (anything ()) (sub 1u32)) (seq (sub 2u32) (anything ()))
+        | Complement => negate (sub 1u32)
+
+:~ ^ letters_of (salt : u32) (id : u32) (candidate : u32) (i : u32) (n : u32) (acc : list u32) : list u32 =
+    ? i >= n ?> acc |:
+        := c = 97u32 + pick salt id (InputLetter (candidate * 1024u32 + i)) % letter_count ()
+        letters_of salt id candidate (i + 1u32) n (c :: acc)
+
+:= word_of_length (salt : u32) (id : u32) (candidate : u32) (low : u32) (high : u32) : list u32 =
+    letters_of salt id candidate 0u32 (low + pick salt id (InputLength candidate) % (high - low + 1u32)) []
+
+:= checked (r : re) (w : list u32) : verdict * bool =
+    := a = answers_of r (build r) (automaton_dfa (certified_of r)) w
+    a::brzozowski, agree a
+
+:~ ^ input_with
+    (r : re) (salt : u32) (id : u32) (wanted : verdict) (low : u32) (high : u32) (candidate : u32)
+    : list u32
+    =
+    := w = word_of_length salt id candidate low high
+    ? candidate >= 63u32 || matches r w = wanted ?> w |: input_with r salt id wanted low high (candidate + 1u32)
+
+:= coin (salt : u32) (id : u32) (k : u32) : i32 = ? pick salt id (PatternPick k) % 2u32 = 0u32 ?> 0i32 |: 1i32
+
+:= depth_of (s : split) (salt : u32) (id : u32) : i32 =
+    ?= s ?|
+    | HeldoutDepth => 4i32 + coin salt id 999u32
+    | _ => 1i32 + coin salt id 999u32 + coin salt id 998u32
+
+:= input_bounds (s : split) : u32 * u32 =
+    ?= s ?|
+    | HeldoutLength => 16u32, 40u32
+    | _ => 0u32, 12u32
+
+:= row_of (f : family) (s : split) (salt : u32) (id : u32) : curriculum_row =
+    := depth = depth_of s salt id
+    := r = pattern_of f salt id depth 0u32
+    := wanted = ? id % 2u32 = 0u32 ?> Accepted |: Rejected
+    := low, high = input_bounds s
+    := w = input_with r salt id wanted low high 0u32
+    := expected, agreed = checked r w
+    { id = id; split = s; family = f; depth = depth; pattern = r; input = w; expected = expected; agreed = agreed }
+
+:~ ^ rows_from (f : family) (s : split) (salt : u32) (id : u32) (n : u32) (acc : list curriculum_row) : list curriculum_row =
+    ? id >= n ?> listm::rev acc |: rows_from f s salt (id + 1u32) n (row_of f s salt id :: acc)
+
+:= rows_of (f : family) (s : split) (salt : u32) (n : u32) : list curriculum_row = rows_from f s salt 0u32 n []
+
+:= families () : list family = [ Literal; CharClass; Quantifier; Alternation; Intersection; Complement ]
+
+:= split_rows (s : split) (salt : u32) (n : u32) : list curriculum_row =
+    families () |> listm::map (\ (f : family) => rows_of f s salt n) |> listm::concat
+
+:= accepted_count (rows : list curriculum_row) : i32 =
+    rows |> listm::fold (\ (n : i32) (x : curriculum_row) => ? x::expected = Accepted ?> n + 1i32 |: n) 0i32
+
+:= input_length (x : curriculum_row) : i32 = listm::length x::input
+
+:= range_text (r : code_range) : string =
+    ? r::low = r::high
+    ?> xml::code_point_string r::low
+    |: xml::code_point_string r::low ++# "-" ++# xml::code_point_string r::high
+
+:= set_text (s : char_set normal) : string =
+    ?= ranges_of s ?|
+    | r :: [] ?& r::low = r::high => range_text r
+    | rs => "[" ++# (rs |> listm::map range_text |> sm'::concat_list "") ++# "]"
+
+:= upper_text (low : u32) (u : upper) : string =
+    := tail = ?= u ?| | Bounded high => sm'::obj_to_string high | Unbounded => ""
+    "{" ++# sm'::obj_to_string low ++# "," ++# tail ++# "}"
+
+:~ ^ pattern_text (r : re) : string =
+    ?= r ?|
+    | Nothing => "[]"
+    | Epsilon => "()"
+    | Set s => set_text s
+    | Seq (a, b) => pattern_text a ++# pattern_text b
+    | Alt (a, b) => "(" ++# pattern_text a ++# "|" ++# pattern_text b ++# ")"
+    | And (a, b) => "(" ++# pattern_text a ++# "&" ++# pattern_text b ++# ")"
+    | Not a => "~" ++# grouped a
+    | Star a => grouped a ++# "*"
+    | Repeat (a, low, u) => grouped a ++# upper_text low u
+:& :~ grouped (r : re) : string =
+    ?= r ?|
+    | Set _ => pattern_text r
+    | Alt _ => pattern_text r
+    | And _ => pattern_text r
+    | _ => "(" ++# pattern_text r ++# ")"
+
+:= probe_salt () : u32 =
+    ? file_system.read_text_or_empty "/regex-curriculum-run-time-probe-missing" = "" ?> 20261112u32 |: 1u32
+
+///> rust
+:# every_curriculum_row_is_labelled_by_four_agreeing_engines =
+    := salt = probe_salt ()
+    := rows = listm::concat [ split_rows Train salt 8u32; split_rows HeldoutDepth salt 4u32; split_rows HeldoutLength salt 4u32 ]
+    := all_agree = rows |> listm::fold (\ (ok : bool) (x : curriculum_row) => ok && x::agreed && matches x::pattern x::input = x::expected) !+
+    ((listm::length rows : i32), all_agree) |> _assert_eq (96i32, !+)
+
+///> rust
+:# held_out_splits_are_strictly_harder_than_train =
+    := salt = probe_salt ()
+    := train, deep, long = split_rows Train salt 8u32, split_rows HeldoutDepth salt 4u32, split_rows HeldoutLength salt 4u32
+    := max_of = \ (f : curriculum_row -> i32) (rows : list curriculum_row) => rows |> listm::fold (\ (m : i32) (x : curriculum_row) => ? f x > m ?> f x |: m) 0i32
+    := min_of = \ (f : curriculum_row -> i32) (rows : list curriculum_row) => rows |> listm::fold (\ (m : i32) (x : curriculum_row) => ? f x < m ?> f x |: m) 1000i32
+    (max_of (\ x => x::depth) train < min_of (\ x => x::depth) deep, max_of input_length train < min_of input_length long)
+    |> _assert_eq (!+, !+)
+
+///> rust
+:# patterns_print_with_their_operators_and_bounds =
+    := salt = probe_salt ()
+    := b = code (97u32 + salt % 1u32 + 1u32)
+    := shaped = Seq (code 97u32, Star (Alt (b, code 99u32)))
+    := bounded = Repeat (Seq (code 97u32, b), 1u32, Bounded 3u32)
+    := classes = And (Set (of_ranges [ range 97u32 99u32 ]), Not (code 98u32))
+    (pattern_text shaped, pattern_text bounded, pattern_text classes)
+    |> _assert_eq ("a(b|c)*", "(ab){1,3}", "([a-c]&~b)")
+
+///> rust
+:# train_rows_hold_both_polarities =
+    := salt = probe_salt ()
+    := train = split_rows Train salt 8u32
+    := accepted = accepted_count train
+    (accepted >= 12i32, accepted <= 36i32) |> _assert_eq (!+, !+)

@@ -1,0 +1,182 @@
+///- --package .
+:# ssv_render static =
+    :< testing
+
+:< ssv_graph
+:< ssv_layout
+
+:== rgb = { r : f64; g : f64; b : f64 }
+
+:== node = { pos : point; kind : state_kind }
+
+:== edge = { a : point; b : point; class_id : i32 }
+
+:== scene = { w : i32; h : i32; nodes : list node; edges : list edge }
+
+:== box = { lo : point; hi : point }
+
+:~ grey (v : f64) : rgb = { r = v; g = v; b = v }
+
+:~ color_of_kind (k : state_kind) : rgb =
+    ?= k ?|
+    | Accepting => { r = 0.18; g = 0.80; b = 0.44 }
+    | Live => { r = 0.20; g = 0.56; b = 0.90 }
+    | DeadEnd => { r = 0.55; g = 0.57; b = 0.60 }
+
+:~ class_palette () : list rgb = [
+    { r = 0.90; g = 0.30; b = 0.24 }
+    { r = 0.95; g = 0.61; b = 0.07 }
+    { r = 0.60; g = 0.40; b = 0.85 }
+    { r = 0.15; g = 0.68; b = 0.65 }
+    { r = 0.85; g = 0.47; b = 0.66 }
+    { r = 0.45; g = 0.55; b = 0.20 }
+    ]
+
+:~ ^ nth_rgb (cs : list rgb) (i : i32) : rgb =
+    ?= cs ?|
+    | c :: rest => ? i <= 0i32 ?> c |: nth_rgb rest (i - 1i32)
+    | [] => grey 0.5
+
+:~ color_of_class (i : i32) : rgb =
+    := n = listm::length (class_palette ())
+    := m = !!!!Mod(i, n)
+    nth_rgb (class_palette ()) (? m < 0i32 ?> m + n |: m)
+
+:~ clamp01 (v : f64) : f64 = max 0.0 (min 1.0 v)
+
+:~ absf (v : f64) : f64 = ? v < 0.0 ?> 0.0 - v |: v
+
+:~ smooth (e0 : f64) (e1 : f64) (x : f64) : f64 =
+    := t = clamp01 ((x - e0) / (e1 - e0 + 0.000001))
+    t * t * (3.0 - 2.0 * t)
+
+:~ disk_cov (p : point) (c : point) (rad : f64) (aa : f64) : f64 =
+    1.0 - smooth (rad - aa) (rad + aa) (distance p c)
+
+:~ seg_dist (p : point) (a : point) (b : point) : f64 =
+    := vx = b::x - a::x
+    := vy = b::y - a::y
+    := wx = p::x - a::x
+    := wy = p::y - a::y
+    := len2 = vx * vx + vy * vy + 0.000001
+    := tt = clamp01 ((wx * vx + wy * vy) / len2)
+    distance p { x = a::x + vx * tt; y = a::y + vy * tt }
+
+:~ seg_cov (p : point) (a : point) (b : point) (half : f64) (aa : f64) : f64 =
+    1.0 - smooth (half - aa) (half + aa) (seg_dist p a b)
+
+:~ over (top : rgb) (a : f64) (bot : rgb) : rgb =
+    := k = clamp01 a
+    { r = bot::r + (top::r - bot::r) * k; g = bot::g + (top::g - bot::g) * k; b = bot::b + (top::b - bot::b) * k }
+
+:~ expand (bx : box) (p : point) : box =
+    := lo = bx::lo
+    := hi = bx::hi
+    { lo = { x = min lo::x p::x; y = min lo::y p::y }; hi = { x = max hi::x p::x; y = max hi::y p::y } }
+
+:~ bbox_of (ps : list point) : box =
+    ?= ps ?|
+    | p :: rest => listm::fold expand { lo = p; hi = p } rest
+    | [] => { lo = origin (); hi = { x = 1.0; y = 1.0 } }
+
+:~ fit (bx : box) (w : i32) (h : i32) (margin : f64) (p : point) : point =
+    := fw = !!!!Conv(`f64, w)
+    := fh = !!!!Conv(`f64, h)
+    := lo = bx::lo
+    := hi = bx::hi
+    := spanx = hi::x - lo::x + 0.000001
+    := spany = hi::y - lo::y + 0.000001
+    := s = min ((fw - 2.0 * margin) / spanx) ((fh - 2.0 * margin) / spany)
+    := cx = (lo::x + hi::x) * 0.5
+    := cy = (lo::y + hi::y) * 0.5
+    { x = fw * 0.5 + (p::x - cx) * s; y = fh * 0.5 + (p::y - cy) * s }
+
+:~ bg () : rgb = { r = 0.07; g = 0.08; b = 0.10 }
+
+:~ node_radius () : f64 = 9.0
+
+:~ edge_half () : f64 = 1.6
+
+:~ aa () : f64 = 1.0
+
+:~ draw_edges (es : list edge) (p : point) (base : rgb) : rgb =
+    listm::fold (\ acc (e : edge) => over (color_of_class e::class_id) (seg_cov p e::a e::b (edge_half ()) (aa ())) acc) base es
+
+:~ draw_nodes (ns : list node) (p : point) (base : rgb) : rgb =
+    listm::fold (\ acc (n : node) => over (color_of_kind n::kind) (disk_cov p n::pos (node_radius ()) (aa ())) acc) base ns
+
+:~ pixel_at (sc : scene) (px : i32) (py : i32) : rgb =
+    := p = { x = !!!!Conv(`f64, px) + 0.5; y = !!!!Conv(`f64, py) + 0.5 }
+    draw_nodes sc::nodes p (draw_edges sc::edges p (bg ()))
+
+:~ byte_of (v : f64) : u8 = !!!!Conv(`u8, !!!!Conv(`i32, clamp01 v * 255.0 + 0.5))
+
+:~ pixel_bytes (c : rgb) : list u8 = [ byte_of c::r; byte_of c::g; byte_of c::b ]
+
+:~ ^ row_bytes (sc : scene) (py : i32) (px : i32) : list u8 =
+    ? px >= sc::w ?> [] |: listm::append (pixel_bytes (pixel_at sc px py)) (row_bytes sc py (px + 1i32))
+
+:~ ^ rows_bytes (sc : scene) (py : i32) : list u8 =
+    ? py >= sc::h ?> [] |: listm::append (row_bytes sc py 0i32) (rows_bytes sc (py + 1i32))
+
+:~ frame_bytes (sc : scene) : list u8 = rows_bytes sc 0i32
+
+:~ bytes_digest (bs : list u8) : i64 =
+    listm::fold (\ h (b : u8) => !!!!Mod(h * 131i64 + !!!!Conv(`i64, b), 1000000007i64)) 7i64 bs
+
+:~ edge_px (bx : box) (w : i32) (h : i32) (m : f64) (ps : list point) (acc : list edge) (e : edge_row) : list edge =
+    ?= e::target ?|
+    | ToState t => { a = fit bx w h m (nth_point ps e::source); b = fit bx w h m (nth_point ps t); class_id = e::source } :: acc
+    | ToDead => acc
+
+:~ scene_of (g : graph) (ps : list point) (w : i32) (h : i32) (m : f64) : scene =
+    := bx = bbox_of ps
+    { w = w; h = h; nodes = listm::map (\ ((s : state_row), (p : point)) => { pos = fit bx w h m p; kind = s::kind }) (listm::zip g::states ps); edges = listm::fold (edge_px bx w h m ps) [] g::edges }
+
+:~ demo_scene () : scene =
+    { w = 16i32; h = 16i32; nodes = [ { pos = { x = 8.0; y = 8.0 }; kind = Accepting } ]; edges = [] }
+
+///> rust
+:# a_frame_is_w_times_h_times_three_bytes =
+    listm::length (frame_bytes (demo_scene ())) |> _assert_eq 768i32
+
+///> rust
+:# two_renders_of_a_scene_are_byte_identical =
+    bytes_digest (frame_bytes (demo_scene ())) |> _assert_eq (bytes_digest (frame_bytes (demo_scene ())))
+
+///> rust
+:# an_accepting_node_paints_its_center_green =
+    := c = pixel_at (demo_scene ()) 8i32 8i32
+    (c::g > 0.70 && c::g > c::r && c::g > c::b) |> _assert_eq !+
+
+///> rust
+:# a_pixel_far_from_all_marks_is_background =
+    := c = pixel_at (demo_scene ()) 0i32 0i32
+    (absf (c::r - 0.07) < 0.001 && absf (c::b - 0.10) < 0.001) |> _assert_eq !+
+
+///> rust
+:# a_disk_fully_covers_its_center_and_fades_outside =
+    := c = { x = 5.0; y = 5.0 }
+    (disk_cov c c 4.0 1.0 > 0.99 && disk_cov { x = 20.0; y = 20.0 } c 4.0 1.0 < 0.01) |> _assert_eq !+
+
+///> rust
+:# an_edge_covers_points_on_its_spine_only =
+    := a = { x = 0.0; y = 0.0 }
+    := b = { x = 10.0; y = 0.0 }
+    (seg_cov { x = 5.0; y = 0.0 } a b 1.6 1.0 > 0.99 && seg_cov { x = 5.0; y = 8.0 } a b 1.6 1.0 < 0.01) |> _assert_eq !+
+
+///> rust
+:# clamp01_bounds_values =
+    (clamp01 2.0, clamp01 (0.0 - 1.0), clamp01 0.3) |> _assert_eq (1.0, 0.0, 0.3)
+
+///> rust
+:# class_colors_wrap_around_the_palette =
+    := n = listm::length (class_palette ())
+    color_of_class 0i32 |> _assert_eq (color_of_class n)
+
+///> rust
+:# scene_of_places_one_node_per_discovered_state =
+    := g = { states = [ { index = 0i32; kind = Live }; { index = 1i32; kind = Accepting } ]; edges = []; rounds = [] }
+    := ps = [ { x = 0.0; y = 0.0 }; { x = 1.0; y = 0.0 } ]
+    := sc = scene_of g ps 32i32 32i32 4.0
+    listm::length sc::nodes |> _assert_eq 2i32

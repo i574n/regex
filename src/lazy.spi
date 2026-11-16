@@ -303,3 +303,56 @@
 :# a_full_store_answers_overflowed_instead_of_growing =
     := s, start = store_of (fourth_from_end ()) 2i32
     run_in s start [ 49u32; 48u32; 48u32; 48u32 ] |> _assert_eq Overflowed
+
+:| matcher =
+    | Eager : dfa
+    | Lazy : re * store * i32
+
+:= matcher_within (cap : i32) (store_cap : i32) (r : re) : matcher =
+    ?= build_within cap r ?|
+    | Built d => Eager d
+    | StateCapReached _ =>
+        := s, start = store_of r store_cap
+        Lazy (r, s, start)
+
+:= matcher_of (r : re) : matcher = matcher_within (table_cap (listm::length (classes_of r))) 65536i32 r
+
+:= match_with (m : matcher) (codes : list u32) : verdict =
+    ?= m ?|
+    | Eager d => run_unchecked d codes
+    | Lazy (r, s, start) =>
+        ?= run_in s start codes ?|
+        | Answered v => v
+        | Overflowed =>
+            := v, _ = run_lazy r codes
+            v
+
+:= is_lazy (m : matcher) : bool =
+    ?= m ?|
+    | Lazy _ => !+
+    | Eager _ => !-
+
+:~ ^ matcher_misses (m : matcher) (b : built) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest => matcher_misses m b rest (? match_with m w = built_run b w ?> n |: n + 1i32)
+    | [] => n
+
+///> c
+///> rust
+:# a_build_within_the_cap_matches_eagerly =
+    := m = matcher_of (fourth_from_end ())
+    (is_lazy m, match_with m [ 49u32; 48u32; 48u32; 48u32 ]) |> _assert_eq (!-, Accepted)
+
+///> c
+///> rust
+:# a_refused_build_falls_back_to_the_lazy_engine_and_agrees_with_eager_on_every_short_word =
+    := ~r = fourth_from_end ()
+    := m = matcher_within 4i32 65536i32 r
+    (is_lazy m, matcher_misses m (build r) (words_upto 6i32 [ [] ] []) 0i32) |> _assert_eq (!+, 0i32)
+
+///> c
+///> rust
+:# a_lazy_store_that_overflows_still_answers_through_the_unbounded_engine =
+    := ~r = fourth_from_end ()
+    := m = matcher_within 4i32 2i32 r
+    (match_with m [ 49u32; 48u32; 48u32; 48u32 ], match_with m [ 48u32; 48u32 ]) |> _assert_eq (Accepted, Rejected)

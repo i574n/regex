@@ -1,0 +1,16 @@
+[package]
+name = "rx_facts"
+version = "0.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+
+[package.metadata.spiral]
+entry = "rx_facts.spi"
+output = "rx_facts.rs"
+
+[lib]
+name = "rx_facts"
+path = "rx_facts.rs"
+
+[dependencies]
+rx_facts_parts = { path = "rx_facts_parts" }

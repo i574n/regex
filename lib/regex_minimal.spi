@@ -1,0 +1,422 @@
+///- --package .
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+
+:# regex_minimal static =
+    :< testing
+
+:| block =
+    | DeadBlock
+    | Block : i32
+
+:~ ^ bool_at (i : i32) (values : list bool) : bool =
+    ?= values ?|
+    | v :: rest => ? i = 0i32 ?> v |: bool_at (i - 1i32) rest
+    | [] => !-
+
+:= is_live (t : target) (live : list bool) : bool =
+    ?= t ?|
+    | Dead => !-
+    | To s => bool_at (state_index s) live
+
+:~ ^ live_after (d : dfa) (live : list bool) : list bool = live_rows d::rows live
+
+:& :~ live_rows (rows : list row) (live : list bool) : list bool =
+    ?= rows ?|
+    | r :: rest => (r::accepting = Accepted || any_live r::next live) :: live_rows rest live
+    | [] => []
+
+:& :~ any_live (next : list target) (live : list bool) : bool =
+    ?= next ?|
+    | t :: rest => is_live t live || any_live rest live
+    | [] => !-
+
+:~ ^ live_fixpoint (d : dfa) (live : list bool) : list bool =
+    := next = live_after d live
+    ? next = live ?> live |: live_fixpoint d next
+
+:~ ^ falses (n : i32) : list bool = ? n <= 0i32 ?> [] |: !- :: falses (n - 1i32)
+
+:= live_states (d : dfa) : list bool = live_fixpoint d (falses (state_count d))
+
+:~ ^ block_at (i : i32) (blocks : list block) : block =
+    ?= blocks ?|
+    | b :: rest => ? i = 0i32 ?> b |: block_at (i - 1i32) rest
+    | [] => DeadBlock
+
+:= block_of (t : target) (blocks : list block) : block =
+    ?= t ?|
+    | Dead => DeadBlock
+    | To s => block_at (state_index s) blocks
+
+:~ ^ blocks_of_targets (next : list target) (blocks : list block) : list block =
+    ?= next ?|
+    | t :: rest => block_of t blocks :: blocks_of_targets rest blocks
+    | [] => []
+
+:== signature = { own : block; moves : list block }
+
+:| found =
+    | FoundAt : i32
+    | Missing
+
+:~ ^ signature_id (s : signature) (seen : list (signature * i32)) : found =
+    ?= seen ?|
+    | (k, id) :: rest => ? k = s ?> FoundAt id |: signature_id s rest
+    | [] => Missing
+
+:== refined = { blocks : list block; seen : list (signature * i32); count : i32 }
+
+:~ new_block (s : signature) (acc : refined) : refined =
+    { blocks = Block acc::count :: acc::blocks; seen = (s, acc::count) :: acc::seen; count = acc::count + 1i32 }
+
+:~ assign (s : signature) (acc : refined) : refined =
+    ?= signature_id s acc::seen ?|
+    | FoundAt known => { acc ?| blocks = Block known :: acc::blocks }
+    | Missing => new_block s acc
+
+:~ refined_at (index : i32) (r : row) (blocks : list block) (acc : refined) : refined =
+    ?= block_at index blocks ?|
+    | DeadBlock => { acc ?| blocks = DeadBlock :: acc::blocks }
+    | own => assign { own = own; moves = blocks_of_targets r::next blocks } acc
+
+:~ ^ refine_rows (rows : list row) (index : i32) (blocks : list block) (acc : refined) : refined =
+    ?= rows ?|
+    | r :: rest => refine_rows rest (index + 1i32) blocks (refined_at index r blocks acc)
+    | [] => { acc ?| blocks = listm::rev acc::blocks }
+
+:~ initial_block (r : row) (live : list bool) (index : i32) : block =
+    ? bool_at index live = !- ?> DeadBlock |? r::accepting = Accepted ?> Block 1i32 |: Block 0i32
+
+:~ ^ initial_blocks (rows : list row) (live : list bool) (index : i32) : list block =
+    ?= rows ?|
+    | r :: rest => initial_block r live index :: initial_blocks rest live (index + 1i32)
+    | [] => []
+
+:~ ^ has_id (id : i32) (seen : list i32) : bool =
+    ?= seen ?|
+    | x :: rest => x = id || has_id id rest
+    | [] => !-
+
+:~ new_id (b : block) (seen : list i32) : option i32 =
+    ?= b ?|
+    | Block id => ? has_id id seen ?> None |: Some id
+    | DeadBlock => None
+
+:~ ^ count_blocks (blocks : list block) (seen : list i32) (n : i32) : i32 =
+    ?= blocks ?|
+    | b :: rest =>
+        ?= new_id b seen ?|
+        | Some id => count_blocks rest (id :: seen) (n + 1i32)
+        | None => count_blocks rest seen n
+    | [] => n
+
+:~ ^ moore (rows : list row) (blocks : list block) (count : i32) : list block * i32 =
+    := next = refine_rows rows 0i32 blocks { blocks = []; seen = []; count = 0i32 }
+    ? next::count = count ?> next::blocks, next::count |: moore rows next::blocks next::count
+
+:~ ^ representative (id : i32) (blocks : list block) (index : i32) : found =
+    ?= blocks ?|
+    | b :: rest => ? b = Block id ?> FoundAt index |: representative id rest (index + 1i32)
+    | [] => Missing
+
+:= index_of_found (f : found) : i32 =
+    ?= f ?|
+    | FoundAt i => i
+    | Missing => 0i32
+
+:~ ^ re_nth (i : i32) (regexes : list re) : re =
+    ?= regexes ?|
+    | r :: rest => ? i = 0i32 ?> r |: re_nth (i - 1i32) rest
+    | [] => Nothing
+
+:= block_target (b : block) : target =
+    ?= b ?|
+    | DeadBlock => Dead
+    | Block id => To (state id)
+
+:~ ^ block_targets (bs : list block) : list target =
+    ?= bs ?|
+    | b :: rest => block_target b :: block_targets rest
+    | [] => []
+
+:~ quotient_row (d : dfa) (blocks : list block) (id : i32) : row * re =
+    := at = index_of_found (representative id blocks 0i32)
+    := r = row_at at d::rows
+    { accepting = r::accepting; next = block_targets (blocks_of_targets r::next blocks) }, re_nth at d::regexes
+
+:~ ^ quotient_rows
+    (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re)
+    : list row * list re
+    =
+    ? id < 0i32 ?> rows, regexes |: quotient_more d blocks id count rows regexes
+
+:& :~ quotient_more
+    (d : dfa) (blocks : list block) (id : i32) (count : i32) (rows : list row) (regexes : list re)
+    : list row * list re
+    =
+    := row, x = quotient_row d blocks id
+    quotient_rows d blocks (id - 1i32) count (row :: rows) (x :: regexes)
+
+:~ minimal_blocks (d : dfa) : list block * i32 =
+    := blocks0 = initial_blocks d::rows (live_states d) 0i32
+    moore d::rows blocks0 (count_blocks blocks0 [] 0i32)
+
+:~ minimize (d : dfa) : dfa =
+    := blocks, count = minimal_blocks d
+    := rows, regexes = quotient_rows d blocks (count - 1i32) count [] []
+    { classes = d::classes; start = block_target (block_of d::start blocks); rows = rows; regexes = regexes }
+
+:= minimal_size (b : built) : size =
+    ?= b ?|
+    | Built d => States (state_count (minimize d))
+    | StateCapReached n => Refused n
+
+///> rust
+///> gleam
+:# zero_runs_minimize_to_two_live_states =
+    := ~r = zero_runs ()
+    minimal_size (build r) |> _assert_eq (States 2i32)
+
+///> rust
+///> gleam
+:# the_fourth_symbol_from_the_end_needs_sixteen_states =
+    := ~r = fourth_from_end ()
+    minimal_size (build r) |> _assert_eq (States 16i32)
+
+///> rust
+///> gleam
+:# an_empty_intersection_minimizes_to_no_live_state =
+    := ~r = both (ends_in_zero ()) (negate (ends_in_zero ()))
+    minimal_size (build r) |> _assert_eq (States 0i32)
+
+:= tri_cyclic_nonminimal () : re =
+    := a = code 97u32
+    seq (star (alt a (seq a a))) (alt (code 98u32) (code 99u32))
+
+///> rust
+///> gleam
+:# a_cyclic_ternary_pattern_has_more_derivatives_than_minimal_states =
+    := ~r = tri_cyclic_nonminimal ()
+    (size_of (build r), minimal_size (build r)) |> _assert_eq (States 4i32, States 2i32)
+
+:== partition =
+    {
+        width : i32
+        preds : array_base (list i32)
+        block : array_base i32
+        members : array_base (list i32)
+        hits : array_base (list i32)
+        mark : array_base i32
+        count : array_base i32
+    }
+
+:~ ^ fill_i32 (a : array_base i32) (i : i32) (n : i32) (v : i32) : () =
+    ? i < n ?>
+        am'::set_base a i v
+        fill_i32 a (i + 1i32) n v
+
+:~ ^ fill_empty (a : array_base (list i32)) (i : i32) (n : i32) : () =
+    ? i < n ?>
+        am'::set_base a i []
+        fill_empty a (i + 1i32) n
+
+:~ empty_lists (n : i32) : array_base (list i32) =
+    := a : array_base (list i32) = am'::create_base n
+    fill_empty a 0i32 n
+    a
+
+:~ filled (n : i32) (v : i32) : array_base i32 =
+    := a : array_base i32 = am'::create_base n
+    fill_i32 a 0i32 n v
+    a
+
+:~ slot_of (t : target) (sink : i32) : i32 =
+    ?= t ?|
+    | Dead => sink
+    | To s => state_index s
+
+:~ add_pred (p : partition) (from : i32) (to : i32) (c : i32) : () =
+    := key = to * p::width + c
+    am'::set_base p::preds key (from :: am'::index_base key p::preds)
+
+:~ ^ add_row (p : partition) (sink : i32) (from : i32) (c : i32) (next : list target) : () =
+    ?= next ?|
+    | t :: rest =>
+        add_pred p from (slot_of t sink) c
+        add_row p sink from (c + 1i32) rest
+    | [] => ()
+
+:~ ^ add_rows (p : partition) (sink : i32) (from : i32) (rows : list row) : () =
+    ?= rows ?|
+    | r :: rest =>
+        add_row p sink from 0i32 r::next
+        add_rows p sink (from + 1i32) rest
+    | [] => ()
+
+:~ ^ add_sink_loops (p : partition) (sink : i32) (c : i32) : () =
+    ? c < p::width ?>
+        add_pred p sink sink c
+        add_sink_loops p sink (c + 1i32)
+
+:~ place_state (p : partition) (s : i32) (b : i32) : () =
+    am'::set_base p::block s b
+    am'::set_base p::members b (s :: am'::index_base b p::members)
+
+:~ ^ place_rows (p : partition) (from : i32) (rows : list row) : () =
+    ?= rows ?|
+    | r :: rest =>
+        place_state p from (? r::accepting = Accepted ?> 1i32 |: 0i32)
+        place_rows p (from + 1i32) rest
+    | [] => ()
+
+:~ ^ every_class (b : i32) (c : i32) (width : i32) (work : list (i32 * i32)) : list (i32 * i32) =
+    ? c >= width ?> work |: every_class b (c + 1i32) width ((b, c) :: work)
+
+:~ with_block (b : i32) (before : list i32) (touched : list i32) : list i32 =
+    ?= before ?|
+    | [] => b :: touched
+    | _ => touched
+
+:~ ^ mark_preds (p : partition) (ps : list i32) (stamp : i32) (touched : list i32) : list i32 =
+    ?= ps ?|
+    | s :: rest => ? am'::index_base s p::mark = stamp ?> mark_preds p rest stamp touched |: mark_new p s rest stamp touched
+    | [] => touched
+
+:& :~ mark_new (p : partition) (s : i32) (rest : list i32) (stamp : i32) (touched : list i32) : list i32 =
+    am'::set_base p::mark s stamp
+    := b = am'::index_base s p::block
+    := before = am'::index_base b p::hits
+    am'::set_base p::hits b (s :: before)
+    mark_preds p rest stamp (with_block b before touched)
+
+:~ ^ collect (p : partition) (states : list i32) (c : i32) (stamp : i32) (touched : list i32) : list i32 =
+    ?= states ?|
+    | t :: rest => collect p rest c stamp (mark_preds p (am'::index_base (t * p::width + c) p::preds) stamp touched)
+    | [] => touched
+
+:~ ^ unmarked (p : partition) (states : list i32) (stamp : i32) (acc : list i32) : list i32 =
+    ?= states ?|
+    | s :: rest => unmarked p rest stamp (? am'::index_base s p::mark = stamp ?> acc |: s :: acc)
+    | [] => acc
+
+:~ ^ move_to (p : partition) (states : list i32) (b : i32) : () =
+    ?= states ?|
+    | s :: rest =>
+        am'::set_base p::block s b
+        move_to p rest b
+    | [] => ()
+
+:~ split_into
+    (p : partition) (b : i32) (hits : list i32) (rest : list i32) (work : list (i32 * i32))
+    : list (i32 * i32)
+    =
+    := fresh = am'::index_base 0i32 p::count
+    am'::set_base p::count 0i32 (fresh + 1i32)
+    := hit_count = (listm::length hits : i32)
+    := small, large = ? hit_count <= listm::length rest ?> hits, rest |: rest, hits
+    am'::set_base p::members b large
+    am'::set_base p::members fresh small
+    move_to p small fresh
+    every_class fresh 0i32 p::width work
+
+:~ split_one (p : partition) (b : i32) (stamp : i32) (work : list (i32 * i32)) : list (i32 * i32) =
+    := hits = am'::index_base b p::hits
+    am'::set_base p::hits b []
+    := rest = unmarked p (am'::index_base b p::members) stamp []
+    ?= rest ?|
+    | [] => work
+    | _ => split_into p b hits rest work
+
+:~ ^ split_all (p : partition) (touched : list i32) (stamp : i32) (work : list (i32 * i32)) : list (i32 * i32) =
+    ?= touched ?|
+    | b :: rest => split_all p rest stamp (split_one p b stamp work)
+    | [] => work
+
+:~ ^ hopcroft_refine (p : partition) (work : list (i32 * i32)) (stamp : i32) : () =
+    ?= work ?|
+    | (a, c) :: rest =>
+        := touched = collect p (am'::index_base a p::members) c stamp []
+        hopcroft_refine p (split_all p touched stamp rest) (stamp + 1i32)
+    | [] => ()
+
+:~ start_refining (p : partition) : () =
+    ?= am'::index_base 1i32 p::members ?|
+    | [] => ()
+    | _ =>
+        am'::set_base p::count 0i32 2i32
+        hopcroft_refine p (every_class 1i32 0i32 p::width []) 0i32
+
+:= hopcroft_partition (d : dfa) : partition =
+    := n = state_count d + 1i32
+    := sink = n - 1i32
+    := width = (listm::length d::classes : i32)
+    := p : partition =
+        {
+            width = width
+            preds = empty_lists (n * width)
+            block = filled n 0i32
+            members = empty_lists n
+            hits = empty_lists n
+            mark = filled n -1i32
+            count = filled 1i32 1i32
+        }
+    add_rows p sink 0i32 d::rows
+    add_sink_loops p sink 0i32
+    place_state p sink 0i32
+    place_rows p 0i32 d::rows
+    start_refining p
+    p
+
+:= hopcroft_states (d : dfa) : i32 =
+    := p = hopcroft_partition d
+    am'::index_base 0i32 p::count - 1i32
+
+:~ dfa_of_built (b : built) : dfa =
+    ?= b ?|
+    | Built d => d
+    | StateCapReached _ => { classes = []; start = Dead; rows = []; regexes = [] }
+
+:~ moore_same (blocks : list block) (i : i32) (j : i32) : bool = block_at i blocks = block_at j blocks
+
+:~ hopcroft_same (p : partition) (i : i32) (j : i32) : bool = am'::index_base i p::block = am'::index_base j p::block
+
+:~ ^ pair_misses (blocks : list block) (p : partition) (i : i32) (j : i32) (n : i32) (misses : i32) : i32 =
+    ? i >= n
+    ?> misses
+    |? j >= n
+    ?> pair_misses blocks p (i + 1i32) 0i32 n misses
+    |: pair_misses blocks p i (j + 1i32) n (? moore_same blocks i j = hopcroft_same p i j ?> misses |: misses + 1i32)
+
+:= partition_disagreements (r : re) : i32 =
+    := d = dfa_of_built (build r)
+    := blocks, _ = minimal_blocks d
+    pair_misses blocks (hopcroft_partition d) 0i32 0i32 (state_count d) 0i32
+
+:= nerode_patterns () : list re =
+    [
+        fourth_from_end (); zero_runs (); ends_in_zero (); tri_cyclic_nonminimal ()
+        both (ends_in_zero ()) (negate (ends_in_zero ())); repeat (code 97u32) 2u32 (Bounded 6u32)
+    ]
+
+:= moore_states (r : re) : i32 =
+    ?= minimal_size (build r) ?|
+    | States n => n
+    | Refused _ => -1i32
+
+:= hopcroft_states_of (r : re) : i32 = hopcroft_states (dfa_of_built (build r))
+
+///> rust
+:# hopcroft_and_moore_find_the_same_number_of_states =
+    := ps = nerode_patterns ()
+    listm::map hopcroft_states_of ps |> _assert_eq (listm::map moore_states ps)
+
+///> rust
+:# hopcroft_and_moore_put_every_pair_of_states_in_the_same_blocks =
+    listm::map partition_disagreements (nerode_patterns ()) |> _assert_eq [ 0i32; 0i32; 0i32; 0i32; 0i32; 0i32 ]
+
+///> rust
+:# hopcroft_merges_the_cyclic_ternary_pattern_to_two_states =
+    hopcroft_states_of (tri_cyclic_nonminimal ()) |> _assert_eq 2i32

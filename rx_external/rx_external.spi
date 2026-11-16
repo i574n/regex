@@ -1,0 +1,28 @@
+:< regex_syntax
+:< regex_derivative
+:< semantics
+:< workloads
+:< sm'_operators
+
+:= backtracking_verdict (r : re) (w : list u32) : verdict =
+    ?= backtracking_answer r w ?|
+    | Reached v => verdict_of_oracle v
+    | OutsideFragment => Rejected
+
+:~ ^ backtrack_hits (r : re) (words : list (list u32)) (n : i32) : i32 =
+    ?= words ?|
+    | w :: rest => backtrack_hits r rest (? backtracking_verdict r w = Accepted ?> n + 1i32 |: n)
+    | [] => n
+
+:~ ^ backtrack_passes (r : re) (words : list (list u32)) (left : i32) (count : i32) : i32 =
+    ? left <= 0i32 ?> count |: backtrack_passes r words (left - 1i32) (backtrack_hits r words 0i32)
+
+:= external_nanos ((i, ws) : i32 * list (list u32)) : u64 * i32 =
+    := r = workload_regex (workload_of_index i)
+    := before = date_time.monotonic_nanoseconds ()
+    := count = backtrack_passes r ws 25i32 0i32
+    date_time.monotonic_nanoseconds () - before, count
+
+:= main () : i32 =
+    export "rx_external_nanos" external_nanos
+    0i32

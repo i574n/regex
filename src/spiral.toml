@@ -1,9 +1,10 @@
 packageDir = '../deps/spiral/lib'
-packages = ['|core-', 'spiral-']
+packages = ['|core-', 'spiral-', '../lib-']
 modules = '''
 lazy
 partial
 agreement
+curriculum
 workloads
 semantics
 laws
@@ -14,5 +15,7 @@ table_emit
 ssv_graph
 ssv_layout
 ssv_parity
+ssv_dispatch
 ssv_determinism
+ssv_render
 '''

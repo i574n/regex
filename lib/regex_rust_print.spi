@@ -1,0 +1,116 @@
+///- --package . --timeout 900000
+:< regex_charset
+:< regex_syntax
+:< regex_certificate
+:< regex_rust
+:< sm'_operators
+
+:# regex_rust_print static =
+    :< testing
+
+:~ hex_char (d : u32) : string =
+    ? d = 10u32 ?> "a" |? d = 11u32 ?> "b" |? d = 12u32 ?> "c" |? d = 13u32 ?> "d" |? d = 14u32 ?> "e" |? d = 15u32 ?> "f"
+    |: sm'::obj_to_string d
+
+:~ ^ hex_of (n : u32) (acc : string) : string =
+    := acc = hex_char (n % 16u32) ++# acc
+    ? n < 16u32 ?> acc |: hex_of (n / 16u32) acc
+
+:~ code_text (c : u32) : string = "\\x{" ++# hex_of c "" ++# "}"
+
+:~ range_text (r : code_range) : string = ? r::low = r::high ?> code_text r::low |: code_text r::low ++# "-" ++# code_text r::high
+
+:~ class_text (s : char_set normal) : string =
+    "[" ++# (ranges_of s |> listm::fold (\ (acc : string) (r : code_range) => acc ++# range_text r) "") ++# "]"
+
+:~ upper_text (up : upper) : string =
+    ?= up ?|
+    | Bounded n => sm'::obj_to_string n
+    | Unbounded => ""
+
+:~ ^ print_body (r : re) : option string =
+    ?= r ?|
+    | Nothing => None
+    | Epsilon => Some "(?:)"
+    | Set s => Some (class_text s)
+    | Seq (a, b) =>
+        ?= print_body a, print_body b ?|
+        | (Some x), (Some y) => Some ("(?:" ++# x ++# ")(?:" ++# y ++# ")")
+        | _ => None
+    | Alt (a, b) =>
+        ?= print_body a, print_body b ?|
+        | (Some x), (Some y) => Some ("(?:" ++# x ++# "|" ++# y ++# ")")
+        | _ => None
+    | And _ => None
+    | Not _ => None
+    | Star x =>
+        ?= print_body x ?|
+        | Some t => Some ("(?:" ++# t ++# ")*")
+        | None => None
+    | Repeat (x, low, up) =>
+        ?= print_body x ?|
+        | Some t => Some ("(?:" ++# t ++# "){" ++# sm'::obj_to_string low ++# "," ++# upper_text up ++# "}")
+        | None => None
+
+:= print_rust (r : re) : option string =
+    ?= print_body r ?|
+    | Some body => Some ("^(?:" ++# body ++# ")$")
+    | None => None
+
+:= printed (r : re) : string =
+    ?= print_rust r ?|
+    | Some t => t
+    | None => ""
+
+:= parsed (t : string) : re =
+    ?= parse_rust t ?|
+    | RustParsed r => r
+    | RustRefused _ => Nothing
+
+:= same_language (a : re) (b : re) : bool =
+    is_included (included (minimal_of a) (minimal_of b)) && is_included (included (minimal_of b) (minimal_of a))
+
+:~ same_text (a : string) (b : string) : bool = a = b
+
+:~ printable_res () : list re =
+    [
+        code 97u32
+        seq (code 97u32) (code 98u32)
+        alt (seq (code 97u32) (code 98u32)) (code 99u32)
+        star (alt (code 48u32) (code 49u32))
+        repeat (code 120u32) 2u32 (Bounded 4u32)
+        repeat (set (of_ranges [ range 97u32 122u32 ])) 1u32 Unbounded
+        set (of_ranges [ range 48u32 57u32; range 97u32 102u32 ])
+        seq (star (set (of_ranges [ range 945u32 969u32 ]))) (code 955u32)
+    ]
+
+:~ rust_texts () : list string = [ "a{2,3}"; "ab|cd"; "[0-9]+"; "x*y" ]
+
+:~ is_none (o : option string) : bool =
+    ?= o ?|
+    | Some _ => !-
+    | None => !+
+
+///> rust
+:# printing_then_parsing_keeps_the_language_so_the_pair_is_a_retraction =
+    (
+        round_trip::laws_hold (round_trip::Retraction round_trip::ThereAndBack) same_language same_text printed parsed (printable_res ()) (rust_texts ()),
+        round_trip::tight (round_trip::Retraction round_trip::ThereAndBack) same_language same_text printed parsed (printable_res ()) (rust_texts ())
+    )
+    |> _assert_eq (!+, !+)
+
+///> rust
+:# the_printer_writes_anchored_hex_classes =
+    (print_rust (repeat (code 120u32) 2u32 (Bounded 3u32)), print_rust (set (of_ranges [ range 48u32 57u32 ])))
+    |> _assert_eq (Some "^(?:(?:[\\x{78}]){2,3})$", Some "^(?:[\\x{30}-\\x{39}])$")
+
+///> rust
+:# intersection_and_complement_have_no_rust_spelling =
+    (is_none (print_rust (both (code 97u32) (code 98u32))), is_none (print_rust (negate (code 97u32))))
+    |> _assert_eq (!+, !+)
+
+///> rust
+:# a_parser_that_drops_the_anchors_breaks_the_declared_law =
+    := unanchored = \ (t : string) => parsed (sm'::replace "^" "" (sm'::replace "$" "" t))
+    round_trip::laws_hold (round_trip::Retraction round_trip::ThereAndBack) same_language same_text printed unanchored (printable_res ()) (rust_texts ())
+    |> _assert_eq !-

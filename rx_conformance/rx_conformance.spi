@@ -1,0 +1,55 @@
+:< regex_rust
+:< regex_rust_agreement
+:< sm'_operators
+
+:~ refusal_name (r : rust_refusal) : string =
+    ?= r ?|
+    | GroupUnclosed => "unclosed group"
+    | ClassUnclosed => "unclosed class"
+    | CloseWithoutOpen => "close without open"
+    | RepeatOfNothing => "repetition of nothing"
+    | RepeatStacked => "stacked repetition"
+    | CountInvalid => "invalid count"
+    | LookaroundUnsupported => "lookaround (the regex crate has none)"
+    | BackreferenceUnsupported => "backreference (the regex crate has none)"
+    | WordBoundaryUnsupported => "word boundary inside a group or after a part that can be empty (not yet exact)"
+    | AnchorInside => "anchor inside a group or mid-branch (not yet exact)"
+    | UnicodeTableMissing => "Unicode property not tabled"
+    | CaseFoldBeyondAscii => "case folding beyond ASCII (not yet exact)"
+    | EscapeUnknown => "unknown escape"
+    | FlagUnknown => "unknown flag"
+    | HexInvalid => "invalid hex scalar"
+
+:~ outcome_text (pattern : string) : string =
+    ?= rust_refusal_of pattern ?|
+    | None => "parsed exactly; agrees with the regex crate on the seeded corpus"
+    | Some r => "refused: " ++# refusal_name r
+
+:~ refusal_examples () : list string =
+    [ "(?=a)"; "(a)\\1"; "a*\\bb"; "a(^b)"; "\\p{Klingon}"; "(?i)\\p{Lu}"; "(?i)\\x{e9}"; "a**" ]
+
+:~ outcome_row (pattern : string) : list markup::markup =
+    [ markup::element "code" [] (markup::escape pattern); markup::escape (outcome_text pattern) ]
+
+:~ ^ first_n (n : i32) (xs : list string) (acc : list string) : list string =
+    ?= xs ?|
+    | x :: rest => ? n <= 0i32 ?> listm::rev acc |: first_n (n - 1i32) rest (x :: acc)
+    | [] => listm::rev acc
+
+:= conformance_html (count : i32) : string =
+    := patterns = first_n count (listm::append (agreement_patterns ()) (refusal_examples ())) []
+    := header = listm::map markup::escape [ "pattern"; "outcome" ]
+    := note =
+        "Rust regex syntax parsed by regex_rust (lib) into the derivative engine; every accepted pattern below is "
+        ^^ "checked against the regex crate on a seeded corpus in the regex_rust_agreement Cells test."
+    markup::concat
+        [
+            markup::element "h2" [] (markup::escape "Rust syntax conformance")
+            markup::element "p" [] (markup::escape note)
+            markup::table header (listm::map outcome_row patterns)
+        ]
+    |> markup::markup_text
+
+:= main () : i32 =
+    export "rx_conformance_html" conformance_html
+    0i32

@@ -1,0 +1,26 @@
+:< regex_table
+:< precomputed_tables
+:< sm'_operators
+
+:~ ^ builds (f : () -> table) (left : i32) (dead : i32) : i32 =
+    ? left <= 0i32
+    ?> dead
+    |:
+        := t = f ()
+        builds f (left - 1i32) (dead + t::dead)
+
+:~ precomputed_micros (f : () -> table) : i64 =
+    := before = date_time.monotonic_nanoseconds ()
+    := dead = builds f 25i32 0i32
+    := spent = date_time.monotonic_nanoseconds () - before
+    ? dead < 0i32 ?> 0i64 |: (conv spent : i64) / 25000i64
+
+:~ report (name : string) (f : () -> table) : () = console.write_line ("precomputed " ++# name ++# " " ++# sm'::show (precomputed_micros f) ++# " us per table build (mean of 25)")
+
+:= main () : i32 =
+    report "s1 (0|1)*0" s1_table
+    report "s2 (0|00)*1" s2_table
+    report "s3 (0|1)*1(0|1){3}" s3_table
+    report "s4 [a-z]{1,64}" s4_table
+    report "s5 (0|1)*1(0|1){7}" s5_table
+    0i32

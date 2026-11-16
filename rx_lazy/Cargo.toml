@@ -1,0 +1,16 @@
+[package]
+name = "rx_lazy"
+version = "0.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+
+[package.metadata.spiral]
+entry = "rx_lazy.spi"
+output = "rx_lazy.rs"
+
+[lib]
+name = "rx_lazy"
+path = "rx_lazy.rs"
+
+[dependencies]
+rx_lazy_parts = { path = "rx_lazy_parts" }

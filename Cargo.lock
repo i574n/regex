@@ -44,15 +44,27 @@ dependencies = [
 name = "regex-bench"
 version = "0.0.1"
 dependencies = [
+ "rx_conformance",
  "rx_crate",
+ "rx_emit",
  "rx_external",
+ "rx_facts",
+ "rx_lazy",
 ]
+
+[[package]]
+name = "regex-ssv-video"
+version = "0.0.1"
 
 [[package]]
 name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "rx_conformance"
+version = "0.0.1"
 
 [[package]]
 name = "rx_crate"
@@ -62,5 +74,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rx_emit"
+version = "0.0.1"
+
+[[package]]
 name = "rx_external"
+version = "0.0.1"
+
+[[package]]
+name = "rx_facts"
+version = "0.0.1"
+
+[[package]]
+name = "rx_lazy"
 version = "0.0.1"

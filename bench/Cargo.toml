@@ -16,3 +16,8 @@ path = "bench.rs"
 [dependencies]
 rx_external = { workspace = true }
 rx_crate = { workspace = true }
+rx_lazy = { workspace = true }
+rx_emit = { workspace = true }
+rx_facts = { workspace = true }
+rx_conformance = { workspace = true }
+bench_parts = { path = "bench_parts" }

@@ -1,0 +1,35 @@
+:< host
+:< sm'_operators
+
+:~ ^ crate_hits (c : compiled_regex) (texts : list string) (n : i32) : i32 =
+    ?= texts ?|
+    | t :: rest => crate_hits c rest (? regex_is_match c t ?> n + 1i32 |: n)
+    | [] => n
+
+:~ ^ crate_passes (c : compiled_regex) (texts : list string) (left : i32) (count : i32) : i32 =
+    ? left <= 0i32 ?> count |: crate_passes c texts (left - 1i32) (crate_hits c texts 0i32)
+
+:= crate_nanos ((pattern, texts) : string * list string) : u64 * i32 =
+    := c = compile_regex pattern
+    := before = date_time.monotonic_nanoseconds ()
+    := count = crate_passes c texts 25i32 0i32
+    date_time.monotonic_nanoseconds () - before, count
+
+:~ ^ automata_hits (d : automata_dfa) (texts : list string) (n : i32) : i32 =
+    ?= texts ?|
+    | t :: rest => automata_hits d rest (? automata_is_match d t ?> n + 1i32 |: n)
+    | [] => n
+
+:~ ^ automata_passes (d : automata_dfa) (texts : list string) (left : i32) (count : i32) : i32 =
+    ? left <= 0i32 ?> count |: automata_passes d texts (left - 1i32) (automata_hits d texts 0i32)
+
+:= automata_nanos ((pattern, texts) : string * list string) : u64 * i32 =
+    := d = compile_automata pattern
+    := before = date_time.monotonic_nanoseconds ()
+    := count = automata_passes d texts 25i32 0i32
+    date_time.monotonic_nanoseconds () - before, count
+
+:= main () : i32 =
+    export "rx_crate_nanos" crate_nanos
+    export "rx_automata_nanos" automata_nanos
+    0i32

@@ -1,0 +1,38 @@
+:< regex_derivative
+:< ssv_graph
+:< ssv_layout
+:< ssv_render
+:< sm'_operators
+:< host
+
+:== reel = { w : i32; h : i32; count : i32; margin : f64 }
+
+:~ layout_frame (states : i32) (r : reel) (k : i32) : i32 = k * states / r::count
+
+:~ entered_graph (g : graph) (m : i32) : graph =
+    := entered = \ (e : edge_row) => e::source < m && (?= e::target ?| ToState t => t < m | ToDead => !+)
+    { g with states = g::states |> listm'::filter (\ (s : state_row) => s::index < m); edges = g::edges |> listm'::filter entered }
+
+:~ frame_of (g : graph) (states : i32) (r : reel) (k : i32) : list u8 =
+    := ps = layout g (layout_frame states r k)
+    frame_bytes (scene_of (entered_graph g (listm::length ps : i32)) ps r::w r::h r::margin)
+
+:~ ^ reel_bytes (g : graph) (states : i32) (r : reel) (k : i32) : list u8 =
+    ? k >= r::count ?> []
+    |: listm::append (frame_of g states r k) (reel_bytes g states r (k + 1))
+
+:= main () : i32 =
+    := path = env_text "SSV_FRAMES_OUT"
+    := r = { w = env_i32 "SSV_WIDTH" 320i32; h = env_i32 "SSV_HEIGHT" 180i32; count = env_i32 "SSV_FRAMES" 48i32; margin = 14.0 }
+    := g = graph_or_empty (fourth_from_end ())
+    := states = max 1i32 (listm::length g::states : i32)
+    := bytes = reel_bytes g states r 0i32
+    := total : i32 = listm::length bytes
+    ? path = ""
+    ?>
+        print_line "SSV-FRAMES-FAILED set SSV_FRAMES_OUT to the raw RGB24 output path"
+        1i32
+    |:
+        file_system.write_bytes path (arraym::fromList bytes)
+        print_line ("SSV-FRAMES " ++# sm'::obj_to_string r::count ++# " frames " ++# sm'::obj_to_string r::w ++# "x" ++# sm'::obj_to_string r::h ++# " states " ++# sm'::obj_to_string states ++# " bytes " ++# sm'::obj_to_string total ++# " digest " ++# sm'::obj_to_string (bytes_digest bytes))
+        0i32

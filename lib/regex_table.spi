@@ -1,0 +1,390 @@
+///- --package .
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_dfa
+:< regex_minimal
+:< regex_certificate
+:< regex_utf8
+:< regex_bytes
+
+:# regex_table static =
+    :< testing
+
+:== table =
+    {
+        width : i32
+        dead : i32
+        start : i32
+        lows : array_base u32
+        next : array_base i32
+        accepting : array_base bool
+    }
+
+:= index_of_target (t : target) (dead : i32) : i32 =
+    ?= t ?|
+    | Dead => dead
+    | To s => state_index s
+
+:~ ^ count_classes (classes : list code_range) (n : i32) : i32 =
+    ?= classes ?|
+    | _ :: rest => count_classes rest (n + 1i32)
+    | [] => n
+
+:~ ^ fill_lows (lows : array_base u32) (classes : list code_range) (i : i32) : () =
+    ?= classes ?|
+    | c :: rest =>
+        am'::set_base lows i c::low
+        fill_lows lows rest (i + 1i32)
+    | [] => ()
+
+:~ ^ fill_targets (next : array_base i32) (at : i32) (targets : list target) (dead : i32) : () =
+    ?= targets ?|
+    | t :: rest =>
+        am'::set_base next at (index_of_target t dead)
+        fill_targets next (at + 1i32) rest dead
+    | [] => ()
+
+:~ ^ fill_rows (t : table) (rows : list row) (s : i32) : () =
+    ?= rows ?|
+    | r :: rest =>
+        fill_targets t::next (s * t::width) r::next t::dead
+        am'::set_base t::accepting s (r::accepting = Accepted)
+        fill_rows t rest (s + 1i32)
+    | [] => ()
+
+:~ ^ fill_dead (t : table) (j : i32) : () =
+    ? j >= t::width
+    ?> ()
+    |:
+        am'::set_base t::next (t::dead * t::width + j) t::dead
+        fill_dead t (j + 1i32)
+
+:~ next_base (n : i32) (k : i32) : array_base i32 = am'::create_base ((n + 1i32) * k)
+
+:~ empty_table (n : i32) (k : i32) (start : i32) : table =
+    {
+        width = k
+        dead = n
+        start = start
+        lows = am'::create_base k
+        next = next_base n k
+        accepting = am'::create_base (n + 1i32)
+    }
+
+:~ fill_table (t : table) (d : dfa) : () =
+    fill_lows t::lows d::classes 0i32
+    fill_rows t d::rows 0i32
+    fill_dead t 0i32
+    am'::set_base t::accepting t::dead !-
+
+:~ table_of (a : automaton certified_phase) : table =
+    := d = automaton_dfa a
+    := n = state_count d
+    := t = empty_table n (count_classes d::classes 0i32) (index_of_target d::start n)
+    fill_table t d
+    t
+
+:~ ^ class_search (lows : array_base u32) (c : u32) (lo : i32) (hi : i32) : i32 =
+    ? lo >= hi
+    ?> lo
+    |:
+        := mid = (lo + hi + 1i32) / 2i32
+        ? am'::index_base mid lows <= c ?> class_search lows c mid hi |: class_search lows c lo (mid - 1i32)
+
+:~ step_code (t : table) (s : i32) (c : u32) : i32 =
+    am'::index_base (s * t::width + class_search t::lows c 0i32 (t::width - 1i32)) t::next
+
+:~ ^ run_codes (t : table) (codes : array_base u32) (i : i32) (n : i32) (s : i32) : bool =
+    ? i >= n
+    ?> am'::index_base s t::accepting
+    |? s = t::dead
+    ?> !-
+    |: run_codes t codes (i + 1i32) n (step_code t s (am'::index_base i codes))
+
+:~ table_run (t : table) (codes : array_base u32) : verdict =
+    verdict_of (run_codes t codes 0i32 (am'::length_base codes) t::start)
+
+:~ ^ count_codes (codes : list u32) (n : i32) : i32 =
+    ?= codes ?|
+    | _ :: rest => count_codes rest (n + 1i32)
+    | [] => n
+
+:~ ^ fill_codes (a : array_base u32) (codes : list u32) (i : i32) : () =
+    ?= codes ?|
+    | c :: rest =>
+        am'::set_base a i c
+        fill_codes a rest (i + 1i32)
+    | [] => ()
+
+:~ array_of_codes (codes : list u32) : array_base u32 =
+    := a : array_base u32 = am'::create_base (count_codes codes 0i32)
+    fill_codes a codes 0i32
+    a
+
+:= minimal_table (r : re) : table = table_of (certified_of r)
+
+:= table_answer (r : re) (w : list u32) : verdict = table_run (minimal_table r) (array_of_codes w)
+
+:= both_answers (r : re) (w : list u32) : verdict * verdict = table_answer r w, matches r w
+
+:= hit_word () : list u32 = [ 49u32; 48u32; 49u32; 49u32 ]
+
+:= miss_word () : list u32 = [ 49u32; 48u32; 48u32; 49u32; 48u32 ]
+
+///> c
+///> rust
+///> gleam
+:# the_array_table_answers_like_the_derivatives_on_the_fourth_symbol_from_the_end =
+    := ~r = fourth_from_end ()
+    (both_answers r (hit_word ()), both_answers r (miss_word ()))
+    |> _assert_eq ((Accepted, Accepted), (Rejected, Rejected))
+
+///> c
+///> rust
+///> gleam
+:# a_symbol_outside_the_alphabet_falls_into_the_dead_row =
+    := ~r = ends_in_zero ()
+    (table_answer r [ 48u32; 120u32; 48u32 ], table_answer r [ 49u32; 48u32 ], table_answer r [])
+    |> _assert_eq (Rejected, Accepted, Rejected)
+
+:== byte_map = { width : i32; class_of_byte : array_base i32 }
+
+:~ ^ fill_byte_classes (t : table) (m : array_base i32) (b : i32) : () =
+    ? b < 256i32 ?>
+        am'::set_base m b (class_search t::lows (conv b : u32) 0i32 (t::width - 1i32))
+        fill_byte_classes t m (b + 1i32)
+
+:= byte_map_of (t : table) : byte_map =
+    := m : array_base i32 = am'::create_base 256i32
+    fill_byte_classes t m 0i32
+    { width = t::width; class_of_byte = m }
+
+:~ step_byte (t : table) (m : byte_map) (s : i32) (b : u8) : i32 =
+    am'::index_base (s * t::width + am'::index_base (conv b : i32) m::class_of_byte) t::next
+
+:~ ^ run_bytes (t : table) (m : byte_map) (bytes : array_base u8) (i : i32) (n : i32) (s : i32) : bool =
+    ? i >= n
+    ?> am'::index_base s t::accepting
+    |? s = t::dead
+    ?> !-
+    |: run_bytes t m bytes (i + 1i32) n (step_byte t m s (am'::index_base i bytes))
+
+:= table_run_bytes (t : table) (m : byte_map) (bytes : array_base u8) : verdict =
+    verdict_of (run_bytes t m bytes 0i32 (am'::length_base bytes) t::start)
+
+:~ ^ fill_bytes (a : array_base u8) (codes : list u32) (i : i32) : () =
+    ?= codes ?|
+    | c :: rest =>
+        am'::set_base a i (conv c : u8)
+        fill_bytes a rest (i + 1i32)
+    | [] => ()
+
+:= array_of_bytes (codes : list u32) : array_base u8 =
+    := a : array_base u8 = am'::create_base (count_codes codes 0i32)
+    fill_bytes a codes 0i32
+    a
+
+:~ ^ byte_mismatches (t : table) (m : byte_map) (b : i32) (n : i32) : i32 =
+    ? b >= 256i32
+    ?> n
+    |:
+        := searched = class_search t::lows (conv b : u32) 0i32 (t::width - 1i32)
+        byte_mismatches t m (b + 1i32) (? am'::index_base b m::class_of_byte = searched ?> n |: n + 1i32)
+
+:~ ^ out_of_range (m : byte_map) (b : i32) (n : i32) : i32 =
+    ? b >= 256i32
+    ?> n
+    |:
+        := k = am'::index_base b m::class_of_byte
+        out_of_range m (b + 1i32) (? k >= 0i32 && k < m::width ?> n |: n + 1i32)
+
+:= byte_map_faults (r : re) : i32 * i32 =
+    := t = minimal_table r
+    := m = byte_map_of t
+    byte_mismatches t m 0i32 0i32, out_of_range m 0i32 0i32
+
+:= byte_and_code_answers (r : re) (w : list u32) : verdict * verdict =
+    := t = minimal_table r
+    table_run_bytes t (byte_map_of t) (array_of_bytes w), table_run t (array_of_codes w)
+
+:= ascii_words () : list (list u32) =
+    [
+        []; [ 48u32 ]; [ 49u32 ]; [ 120u32 ]; hit_word (); miss_word ()
+        [ 49u32; 48u32; 48u32; 48u32 ]; [ 48u32; 49u32; 120u32; 48u32 ]; [ 49u32; 49u32; 49u32; 49u32; 49u32; 49u32 ]
+    ]
+
+:~ ^ answer_misses (r : re) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := byte_answer, code_answer = byte_and_code_answers r w
+        answer_misses r rest (? byte_answer = code_answer ?> n |: n + 1i32)
+    | [] => n
+
+///> c
+///> rust
+:# every_byte_value_maps_to_the_class_the_search_finds_and_stays_in_range =
+    listm::map byte_map_faults [ fourth_from_end (); ends_in_zero (); zero_runs (); tri_cyclic_nonminimal () ]
+    |> _assert_eq [ (0i32, 0i32); (0i32, 0i32); (0i32, 0i32); (0i32, 0i32) ]
+
+///> c
+///> rust
+:# the_byte_loop_answers_like_the_code_loop_on_ascii_words =
+    listm::map (\ r => answer_misses r (ascii_words ()) 0i32) [ fourth_from_end (); ends_in_zero (); zero_runs () ]
+    |> _assert_eq [ 0i32; 0i32; 0i32 ]
+
+///> c
+///> rust
+:# a_byte_outside_the_alphabet_falls_into_the_dead_row =
+    := ~r = ends_in_zero ()
+    := t = minimal_table r
+    (table_run_bytes t (byte_map_of t) (array_of_bytes [ 48u32; 255u32; 48u32 ]), table_run_bytes t (byte_map_of t) (array_of_bytes [ 49u32; 48u32 ]))
+    |> _assert_eq (Rejected, Accepted)
+
+:== dense = { width : i32; dead : i32; start : i32; limit : i32; classes : array_base i32; next : array_base i32 }
+
+:~ ^ count_accepting (t : table) (s : i32) (n : i32) : i32 =
+    ? s >= t::dead ?> n |: count_accepting t (s + 1i32) (? am'::index_base s t::accepting ?> n + 1i32 |: n)
+
+:~ ^ number_states (t : table) (ids : array_base i32) (s : i32) (a : i32) (b : i32) : () =
+    ? s < t::dead ?>
+        ? am'::index_base s t::accepting
+        ?>
+            am'::set_base ids s a
+            number_states t ids (s + 1i32) (a + 1i32) b
+        |:
+            am'::set_base ids s b
+            number_states t ids (s + 1i32) a (b + 1i32)
+
+:~ renumbered (t : table) : array_base i32 =
+    := ids : array_base i32 = am'::create_base (t::dead + 1i32)
+    number_states t ids 0i32 0i32 (count_accepting t 0i32 0i32)
+    am'::set_base ids t::dead t::dead
+    ids
+
+:~ ^ fill_dense (t : table) (ids : array_base i32) (next : array_base i32) (at : i32) (size : i32) : () =
+    ? at < size ?>
+        := s = at / t::width
+        := c = at - s * t::width
+        := target = am'::index_base at t::next
+        am'::set_base next (am'::index_base s ids * t::width + c) (am'::index_base target ids * t::width)
+        fill_dense t ids next (at + 1i32) size
+
+:= dense_of_table (t : table) : dense =
+    := ids = renumbered t
+    := size = (t::dead + 1i32) * t::width
+    := next : array_base i32 = am'::create_base size
+    fill_dense t ids next 0i32 size
+    {
+        width = t::width
+        dead = t::dead * t::width
+        start = am'::index_base t::start ids * t::width
+        limit = count_accepting t 0i32 0i32 * t::width
+        classes = (byte_map_of t)::class_of_byte
+        next = next
+    }
+
+:= dense_of (r : re) : dense = dense_of_table (minimal_table r)
+
+:~ dense_step (d : dense) (s : i32) (b : u8) : i32 = am'::index_base (s + am'::index_base (conv b : i32) d::classes) d::next
+
+:~ ^ dense_full (d : dense) (bytes : array_base u8) (i : i32) (n : i32) (s : i32) : bool =
+    ? i >= n
+    ?> s < d::limit
+    |? s = d::dead
+    ?> !-
+    |: dense_full d bytes (i + 1i32) n (dense_step d s (am'::index_base i bytes))
+
+:~ ^ dense_search (d : dense) (bytes : array_base u8) (i : i32) (n : i32) (s : i32) : bool =
+    ? s < d::limit
+    ?> !+
+    |? i >= n || s = d::dead
+    ?> !-
+    |: dense_search d bytes (i + 1i32) n (dense_step d s (am'::index_base i bytes))
+
+:= dense_matches (d : dense) (bytes : array_base u8) : bool = dense_full d bytes 0i32 (am'::length_base bytes) d::start
+
+:= dense_is_match (d : dense) (bytes : array_base u8) : bool = dense_search d bytes 0i32 (am'::length_base bytes) d::start
+
+:= searcher_of (r : re) : dense = dense_of (seq (star (any_code ())) r)
+
+:~ ^ full_misses (r : re) (d : dense) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := dense_answer = verdict_of (dense_matches d (array_of_bytes w))
+        full_misses r d rest (? dense_answer = table_answer r w ?> n |: n + 1i32)
+    | [] => n
+
+:~ ^ search_misses (r : re) (d : dense) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := reference = matches (seq (star (any_code ())) (seq r (star (any_code ())))) w
+        := found = verdict_of (dense_is_match d (array_of_bytes w))
+        search_misses r d rest (? found = reference ?> n |: n + 1i32)
+    | [] => n
+
+:= dense_shape (r : re) : bool * bool * bool =
+    := t = minimal_table r
+    := d = dense_of_table t
+    (d::limit = count_accepting t 0i32 0i32 * t::width, d::dead = t::dead * t::width, d::start / d::width * d::width = d::start)
+
+:= ten () : re = seq (one ()) (zero ())
+
+///> c
+///> rust
+:# the_premultiplied_table_answers_like_the_code_table_on_ascii_words =
+    listm::map (\ r => full_misses r (dense_of r) (ascii_words ()) 0i32) [ fourth_from_end (); ends_in_zero (); zero_runs (); ten () ]
+    |> _assert_eq [ 0i32; 0i32; 0i32; 0i32 ]
+
+///> c
+///> rust
+:# accepting_states_come_first_so_a_match_is_one_comparison =
+    listm::map dense_shape [ fourth_from_end (); ends_in_zero (); zero_runs (); ten () ]
+    |> _assert_eq [ (!+, !+, !+); (!+, !+, !+); (!+, !+, !+); (!+, !+, !+) ]
+
+///> c
+///> rust
+:# the_unanchored_search_finds_a_match_anywhere_like_the_derivatives =
+    listm::map (\ r => search_misses r (searcher_of r) (ascii_words ()) 0i32) [ ten (); zero_runs (); fourth_from_end () ]
+    |> _assert_eq [ 0i32; 0i32; 0i32 ]
+
+:= byte_dense (r : re) : dense = dense_of (to_bytes r)
+
+:= any_byte () : re = set (of_ranges [ range 0u32 255u32 ])
+
+:= byte_searcher (r : re) : dense = dense_of (seq (star (any_byte ())) (to_bytes r))
+
+:~ ^ utf8_full_misses (r : re) (d : dense) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := found = verdict_of (dense_matches d (array_of_bytes (utf8_word w)))
+        utf8_full_misses r d rest (? found = matches r w ?> n |: n + 1i32)
+    | [] => n
+
+:~ ^ utf8_search_misses (r : re) (d : dense) (ws : list (list u32)) (n : i32) : i32 =
+    ?= ws ?|
+    | w :: rest =>
+        := reference = matches (seq (star (any_code ())) (seq r (star (any_code ())))) w
+        := found = verdict_of (dense_is_match d (array_of_bytes (utf8_word w)))
+        utf8_search_misses r d rest (? found = reference ?> n |: n + 1i32)
+    | [] => n
+
+:~ ^ bytes_in_lows (lows : array_base u32) (i : i32) (n : i32) : i32 =
+    ? i >= am'::length_base lows ?> n |: bytes_in_lows lows (i + 1i32) (? am'::index_base i lows <= 255u32 ?> n + 1i32 |: n)
+
+:= byte_class_count (r : re) : i32 = bytes_in_lows (minimal_table (to_bytes r))::lows 0i32 0i32
+
+///> rust
+:# the_dense_byte_table_matches_utf8_input_like_the_code_point_engine =
+    listm::map (\ (r : re) => utf8_full_misses r (byte_dense r) (mixed_words ()) 0i32) (utf8_patterns ())
+    |> _assert_eq [ 0i32; 0i32; 0i32; 0i32; 0i32; 0i32 ]
+
+///> rust
+:# the_unanchored_byte_search_finds_a_match_anywhere_in_utf8_input =
+    listm::map (\ (r : re) => utf8_search_misses r (byte_searcher r) (mixed_words ()) 0i32) [ greek (); code 8364u32; seq (code 233u32) (code 955u32) ]
+    |> _assert_eq [ 0i32; 0i32; 0i32 ]
+
+///> rust
+:# a_byte_dfa_never_needs_more_than_256_byte_classes =
+    listm::map (\ (r : re) => byte_class_count r <= 256i32) (utf8_patterns ())
+    |> _assert_eq [ !+; !+; !+; !+; !+; !+ ]

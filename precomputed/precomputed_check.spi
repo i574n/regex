@@ -1,0 +1,27 @@
+///- --package . --timeout 900000
+:# precomputed_check static =
+    :< testing
+
+:< regex_charset
+:< regex_syntax
+:< regex_derivative
+:< regex_table
+:< table_emit
+:< lazy
+:< precomputed_tables
+
+:~ agrees_on_short_words (r : re) (precomputed : table) : bool = answers_agree (minimal_table r) precomputed (words_upto 6i32 [ [] ] [])
+
+///> rust
+:# the_precomputed_two_state_tables_answer_like_the_certified_ones =
+    (agrees_on_short_words (ends_in_zero ()) (s1_table ()), agrees_on_short_words (zero_runs ()) (s2_table ())) |> _assert_eq (!+, !+)
+
+///> rust
+:# the_precomputed_fourth_from_end_table_answers_like_the_certified_one =
+    agrees_on_short_words (fourth_from_end ()) (s3_table ()) |> _assert_eq !+
+
+///> rust
+:# the_precomputed_counted_and_eighth_tables_keep_their_state_counts =
+    := counted = s4_table ()
+    := eighth = s5_table ()
+    (counted::dead, eighth::dead) |> _assert_eq (65i32, 256i32)

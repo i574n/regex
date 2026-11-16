@@ -1,0 +1,25 @@
+:< regex_table
+:< table_emit
+:< workloads
+:< sm'_operators
+
+:~ ^ module_text (lines : list string) : string =
+    ?= lines ?|
+    | [] => ""
+    | [ last ] => last
+    | line :: rest => line ++# "\n\n" ++# module_text rest
+
+:~ precomputed_header () : string =
+    "///- --package . --timeout 900000\n:# precomputed_tables static =\n    :< testing\n\n:< regex_table\n:< table_emit\n\n"
+
+:~ precomputed_lines (k : i32) (w : workload) : list string = table_lines ("s" ++# sm'::show k ++# "_") (minimal_table (workload_regex w))
+
+:~ precomputed_all (upto : i32) : list string =
+    [ 1i32, EndsInZero; 2i32, ZeroRuns; 3i32, FourthFromEnd; 4i32, CountedLetters; 5i32, EighthFromEnd ]
+    |> listm::fold (\ (acc : list string) ((k, w) : i32 * workload) => ? k <= upto ?> listm::append acc (precomputed_lines k w) |: acc) []
+
+:= precomputed_text (upto : i32) : string = precomputed_header () ++# module_text (precomputed_all upto)
+
+:= main () : i32 =
+    export "rx_emit_precomputed_text" precomputed_text
+    0i32
